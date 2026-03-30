@@ -1,0 +1,79 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Courier New', Courier, monospace;
+    background-color: #0d121e; 
+    color: #e0e6ed; 
+    height: 100vh;
+}
+
+header {
+    padding: 15px 40px; 
+    text-align: left; 
+    background-color: #0d121e; 
+
+    border-bottom: 3px solid #d03379;
+    box-shadow: 0 4px 15px rgba(208, 51, 121, 0.5); 
+}
+
+header h1 {
+    font-size: 1.8rem;
+    font-weight: bold; 
+    letter-spacing: 1px;
+}
+/*Estilização dos botões*/
+#buttons-tab{
+    background-color: #1f2937;
+    
+    display: flex;
+}
+.button {
+    padding: 10px;
+    background-color: #111827;
+}
+
+/* Estilização das janelas*/
+.workspace {
+    display: flex;
+    flex-wrap: wrap;
+    padding: 5px 0;
+}
+
+.widget {
+    background-color: #111827;
+    border: 1px solid #374151; 
+    border-radius: 6px;
+    
+    min-width: 250px;
+    min-height: 200px;
+    width: 350px; 
+    
+    resize: both; 
+    overflow: hidden; 
+    display: flex;
+    flex-direction: column;
+}
+
+.widget-header {
+    background-color: #1f2937;
+    padding: 10px 15px;
+    border-bottom: 2px solid #d03379; 
+    font-weight: bold;
+    font-size: 0.9rem;
+}
+
+.widget-content {
+    padding: 15px;
+    flex-grow: 1; 
+    overflow: auto; 
+}
+
+
+main {
+
+    padding: 15px;
+}

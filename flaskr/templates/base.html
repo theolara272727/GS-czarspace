@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}{% endblock %} - Czar GS</title>
+    <link rel='stylesheet' href="{{ url_for('static',filename='css/style.css')}}"></link>
+</head>
+<body>
+    <header>
+        <h1>Czar Ground Station</h1>
+    </header>
+    <div id="buttons-tab">
+        <div class="button" id="testButton">Test Widget</div>
+    </div>
+    <main>
+        
+        <div id="workspace" class="workspace"></div>
+    </main>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+
+</body>
+</html>
