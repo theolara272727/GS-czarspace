@@ -3,7 +3,7 @@ import serial
 import threading
 import os
 
-PORTA = 'COM3' #Porta de entrada de dados
+PORTA = 'COM1' #Porta de entrada de dados
 BAUD = 9600 
 
 porta_serial = serial.Serial(PORTA, BAUD) #Configura a porta serial

@@ -9,6 +9,7 @@ body {
     background-color: #0d121e; 
     color: #e0e6ed; 
     height: 100vh;
+    overflow: hidden;
 }
 
 header {
@@ -38,21 +39,24 @@ header h1 {
 
 /* Estilização das janelas*/
 .workspace {
-    display: flex;
+    position: relative;
+    height: calc(100vh - 100px);
+    overflow: hidden;
     flex-wrap: wrap;
-    padding: 5px 0;
+    background-image: radial-gradient(#374151 1px, transparent 1px);
+    background-size: 20px 20px;
 }
 
 .widget {
+    position: absolute;
     background-color: #111827;
     border: 1px solid #374151; 
     border-radius: 6px;
     
-    min-width: 250px;
+    min-width: 260px;
     min-height: 200px;
-    width: 350px; 
+    width: 360px; 
     
-    resize: both; 
     overflow: hidden; 
     display: flex;
     flex-direction: column;
@@ -60,11 +64,15 @@ header h1 {
 
 .widget-header {
     background-color: #1f2937;
-    padding: 10px 15px;
+    padding: 5px 10px;
     border-bottom: 2px solid #d03379; 
     font-weight: bold;
     font-size: 0.9rem;
+    cursor: move; 
+
+    user-select: none; 
 }
+
 
 .widget-content {
     padding: 15px;
@@ -72,8 +80,15 @@ header h1 {
     overflow: auto; 
 }
 
-
-main {
-
-    padding: 15px;
+.widget-resize-handle {
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 15px;
+    height: 15px;
+    cursor: nwse-resize; 
+    background-color: transparent;
+    background-image: linear-gradient(135deg, transparent 50%, #d03379 50%);
+    border-bottom-right-radius: 4px;
 }
+
