@@ -12,12 +12,16 @@
     </header>
     <div id="buttons-tab">
         <div class="button" id="testButton">Test Widget</div>
+        <div class="button" id="rawDataButton">Terminal</div>
+
     </div>
     <main>
         
         <div id="workspace" class="workspace"></div>
     </main>
-    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/socket.io.min.js') }}"></script>
+    
+    <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>
 
 </body>
 </html>

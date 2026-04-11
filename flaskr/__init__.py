@@ -2,22 +2,23 @@ from flask import (Flask,render_template)
 import serial 
 import threading
 import os
+import time
+from flask_socketio import SocketIO, send, emit
+
 
 PORTA = 'COM1' #Porta de entrada de dados
 BAUD = 9600 
 
 porta_serial = serial.Serial(PORTA, BAUD) #Configura a porta serial
 porta_serial.timeout = 2
+socketio = SocketIO()
 
-def read_serial():
-     global serial_input
-     while True:
-         serial_input = porta_serial.readline()
 
 
 
 def create_app(test_config=None):
     app = Flask(__name__, instance_relative_config=True)
+    socketio.init_app(app)
     app.config.from_mapping(
         SECRET_KEY='dev',
         DATABASE=os.path.join(app.instance_path, 'flaskr.sqlite'),
@@ -39,9 +40,23 @@ def create_app(test_config=None):
 
     return app
 
+def read_serial():
+    contador = 0
+    while True:
+        contador += 1
+        time.sleep(2)
+        
+        dados = {
+            "1": 1000 + (contador * 5),
+            "2": 99.9 - (contador * 0.1)
+        }
+        # serial_input = porta_serial.readline()
+        socketio.emit('new_data', dados)
 
-# if __name__ == '__main__':
-#     read_thread = threading.Thread(target=read_serial,name="ReadSerialDataThread")
-#     read_thread.daemon = True
-#     read_thread.start()
-#     app.run(use_reloader=False)
+@socketio.on('connect')
+def init_connection():
+    socketio.start_background_task(read_serial)
+
+if __name__ == '__main__':
+    app = create_app()
+    socketio.run(app)
