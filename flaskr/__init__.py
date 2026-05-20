@@ -10,6 +10,7 @@ PORTA = 'COM1' #Porta de entrada de dados
 BAUD = 9600 
 
 porta_serial = None
+thread = None
 try:
     porta_serial = serial.Serial(PORTA, BAUD) #Configura a porta serial
     porta_serial.timeout = 2
@@ -45,20 +46,39 @@ def create_app(test_config=None):
 
 def read_serial():
     contador = 0
+    lat_atual = -19.9167
+    lng_atual = -43.9345
     while True:
         contador += 1
         time.sleep(2)
+
+        lat_atual += 0.002 
+        lng_atual += 0.002
         
-        dados = {
+        dados_sensores = {
             "1": 1000 + (contador * 5),
             "2": 99.9 - (contador * 0.1)
         }
-        # serial_input = porta_serial.readline()
-        socketio.emit('new_data', dados)
+        
+        dados_aeronave = {
+            "id": "PR-XYZ",
+            "lat": round(lat_atual, 6), 
+            "lng": round(lng_atual, 6),
+            "altitude": 10500
+        }
+        
+        pacote = {**dados_sensores, **dados_aeronave}
+        socketio.emit('new_data', pacote)
 
 @socketio.on('connect')
 def init_connection():
-    socketio.start_background_task(read_serial)
+    global thread 
+    
+    if thread is None:
+        print("Iniciando a transmissão de dados do avião...")
+        thread = socketio.start_background_task(read_serial)
+    else:
+        print("Cliente conectado, mas o loop já está rodando.")
 
 if __name__ == '__main__':
     app = create_app()

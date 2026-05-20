@@ -3,6 +3,18 @@ export default class MapWidget {
         this.title = title;
         this.containerDestino = document.getElementById(idContainerDestino);
 
+        this.AirplaneIcon = L.Icon.extend({
+            options: {
+                iconUrl: '/static/img/plane.png', 
+                // shadowUrl: 'caminho/para/sua/sombra.png',
+                iconSize:     [38, 38], 
+                iconAnchor:   [19, 19], 
+                popupAnchor:  [0, -20]
+            }
+        });
+        
+        this.marcadoresAtivos = {};
+
         this.element = document.createElement('div');
         this.element.className = 'widget';
 
@@ -156,7 +168,30 @@ export default class MapWidget {
             console.error("Contêiner de destino não encontrado");
         }
     }
-    update(deltaTime){
 
+    atualizarAviao(dadosDoVoo) {
+        if (!this.map) return; 
+
+        let idVoo = dadosDoVoo.id;
+        let lat = dadosDoVoo.lat;
+        let lng = dadosDoVoo.lng;
+
+        if (this.marcadoresAtivos[idVoo]) {
+            
+            this.marcadoresAtivos[idVoo].setLatLng([lat, lng]);
+            
+        } else {
+            let iconeDoVoo = new this.AirplaneIcon();
+            let novoMarcador = L.marker([lat, lng], {icon: iconeDoVoo}).addTo(this.map);
+            
+            this.marcadoresAtivos[idVoo] = novoMarcador;
+        }
+    }
+
+    
+    update(dados) {
+        if (dados && dados.lat !== undefined && dados.lng !== undefined) {
+            this.atualizarAviao(dados);
+        }
     }
 }

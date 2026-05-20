@@ -42,16 +42,20 @@ createNewMapButton.addEventListener('click', () => {
 
 //Lógica de updates dos widgets
 
-function updateWidgets(currentTime) {
+// function updateWidgets(currentTime) {
 
 
-    // Atualiza todos os widgets da tela
+//     // Atualiza todos os widgets da tela
+//     for (let widget of widget_list) {
+//         widget.update();
+//     }
+
+// }
+function updateWidgets() {
     for (let widget of widget_list) {
-        widget.update();
+        widget.update(current_data); 
     }
-
 }
-
 document.addEventListener('DOMContentLoaded', () => {
     
 
