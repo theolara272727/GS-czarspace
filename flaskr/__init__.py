@@ -9,12 +9,15 @@ from flask_socketio import SocketIO, send, emit
 PORTA = 'COM1' #Porta de entrada de dados
 BAUD = 9600 
 
-porta_serial = serial.Serial(PORTA, BAUD) #Configura a porta serial
-porta_serial.timeout = 2
+porta_serial = None
+try:
+    porta_serial = serial.Serial(PORTA, BAUD) #Configura a porta serial
+    porta_serial.timeout = 2
+except serial.SerialException as exc:
+    porta_serial = None
+    print(f"Aviso: não foi possível abrir a porta serial {PORTA}: {exc}")
+
 socketio = SocketIO()
-
-
-
 
 def create_app(test_config=None):
     app = Flask(__name__, instance_relative_config=True)

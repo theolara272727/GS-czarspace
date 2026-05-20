@@ -1,4 +1,5 @@
 import BaseWidget from './widgets/BaseWidget.js';
+import MapWidget from './widgets/MapWidget.js';
 import terminalWidget from './widgets/terminalWidget.js';
 
 
@@ -21,6 +22,7 @@ createNewTestButton.addEventListener('click', () => {
   widget_list.push(widget);
   widget.render();
 });
+
 const createRawDataButton = document.getElementById("rawDataButton")
 createRawDataButton.addEventListener('click', () => {
 
@@ -29,8 +31,13 @@ createRawDataButton.addEventListener('click', () => {
   widget.render();
 });
 
+const createNewMapButton = document.getElementById("mapButton")
+createNewMapButton.addEventListener('click', () => {
 
-
+  const widget = new MapWidget("Map View","workspace");
+  widget_list.push(widget);
+  widget.render();
+});
 
 
 //Lógica de updates dos widgets
