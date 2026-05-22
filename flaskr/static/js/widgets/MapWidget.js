@@ -2,6 +2,7 @@ export default class MapWidget {
     constructor(title, idContainerDestino) {
         this.title = title;
         this.containerDestino = document.getElementById(idContainerDestino);
+        this.aviaoFocado = null;
 
         this.AirplaneIcon = L.Icon.extend({
             options: {
@@ -162,6 +163,26 @@ export default class MapWidget {
                     maxZoom: 19,
                     attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
                 }).addTo(this.map);
+                
+                const soltarCamera = () => {
+                    if (this.aviaoFocado !== null) {
+                        
+                        let idDoAviaoSeguido = this.aviaoFocado;
+                        
+                        this.aviaoFocado = null; 
+                        
+                        let aviao = this.marcadoresAtivos[idDoAviaoSeguido];
+                        if (aviao) {
+                            aviao.slideTo(aviao.getLatLng(), {
+                                duration: 0,
+                                keepAtCenter: false
+                            });
+                        }
+                    }
+                };
+                
+                this.map.on('dragstart', soltarCamera);
+                this.map.on('click', soltarCamera);
             }, 0);
 
         } else {
@@ -178,20 +199,51 @@ export default class MapWidget {
 
         if (this.marcadoresAtivos[idVoo]) {
             
-            this.marcadoresAtivos[idVoo].setLatLng([lat, lng]);
+            let deveCentralizar = (this.aviaoFocado === idVoo);
+
+            this.marcadoresAtivos[idVoo].slideTo([lat, lng], {
+                duration: 2000,       
+                keepAtCenter: deveCentralizar,   
+            });
+            let textoAtualizado = `<b>${idVoo}</b><br>${dadosDoVoo.lat}<br>${dadosDoVoo.lng}<br>${dadosDoVoo.altitude} ft`;
+            
+            this.marcadoresAtivos[idVoo].setTooltipContent(textoAtualizado);
             
         } else {
             let iconeDoVoo = new this.AirplaneIcon();
-            let novoMarcador = L.marker([lat, lng], {icon: iconeDoVoo}).addTo(this.map);
+            let textoLateral = `<b>${idVoo}</b><br>${dadosDoVoo.lat}<br>${dadosDoVoo.lng}<br>${dadosDoVoo.altitude} ft`;
+            let novoMarcador = L.marker([lat, lng], {icon: iconeDoVoo})
+                .bindTooltip(textoLateral, { 
+                    permanent: false,       // Mantém o texto sempre visível
+                    direction: 'right',    // Posiciona o texto à direita do avião
+                    offset: [15, 0],       // Afasta o texto 15 pixels para não cobrir o desenho
+                    className: 'meu-tooltip' // Classe CSS opcional para você estilizar depois
+                })
+                .addTo(this.map);
+            
+            novoMarcador.on('click', () => {
+                
+                if (this.aviaoFocado === idVoo) {
+                    console.log(`Parando de focar no avião: ${idVoo}`);
+                    this.aviaoFocado = null;
+                } 
+                else {
+                    console.log(`Focando no avião: ${idVoo}`);
+                    this.aviaoFocado = idVoo; 
+                }
+                
+            });
             
             this.marcadoresAtivos[idVoo] = novoMarcador;
         }
     }
 
-    
     update(dados) {
-        if (dados && dados.lat !== undefined && dados.lng !== undefined) {
-            this.atualizarAviao(dados);
+        if (dados && dados.avioes) {
+            
+            for (let aviaoAtual of dados.avioes) {
+                this.atualizarAviao(aviaoAtual);
+            }
         }
     }
 }

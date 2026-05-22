@@ -50,25 +50,26 @@ def read_serial():
     lng_atual = -43.9345
     while True:
         contador += 1
-        time.sleep(2)
+        time.sleep(1)
 
-        lat_atual += 0.002 
-        lng_atual += 0.002
+        lat_atual += 0.0005 
+        lng_atual += 0.0005
         
-        dados_sensores = {
-            "1": 1000 + (contador * 5),
-            "2": 99.9 - (contador * 0.1)
+        pacote_completo = {
+            # Os dados brutos para o seu widget de terminal continuam normais
+            "sensores_brutos": {
+                "1": 1000 + (contador * 5),
+                "2": 99.9 - (contador * 0.1)
+            },
+            
+            # Os aviões agora viajam dentro de uma LISTA []
+            "avioes": [
+                {"id": "PR-XYZ", "lat": round(lat_atual, 6), "lng": round(lng_atual, 6), "altitude": 10500},
+                {"id": "PT-ABC", "lat": round(lat_atual - 0.01, 6), "lng": round(lng_atual, 6), "altitude": 12000}
+            ]
         }
         
-        dados_aeronave = {
-            "id": "PR-XYZ",
-            "lat": round(lat_atual, 6), 
-            "lng": round(lng_atual, 6),
-            "altitude": 10500
-        }
-        
-        pacote = {**dados_sensores, **dados_aeronave}
-        socketio.emit('new_data', pacote)
+        socketio.emit('new_data', pacote_completo)
 
 @socketio.on('connect')
 def init_connection():
