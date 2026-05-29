@@ -1,7 +1,6 @@
 import BaseWidget from './widgets/BaseWidget.js';
-import MapWidget from './widgets/MapWidget.js';
 import terminalWidget from './widgets/terminalWidget.js';
-
+import chartWidget from './widgets/ChartLine.js';
 
 //Websocket
 const socket = io();
@@ -22,7 +21,6 @@ createNewTestButton.addEventListener('click', () => {
   widget_list.push(widget);
   widget.render();
 });
-
 const createRawDataButton = document.getElementById("rawDataButton")
 createRawDataButton.addEventListener('click', () => {
 
@@ -31,31 +29,28 @@ createRawDataButton.addEventListener('click', () => {
   widget.render();
 });
 
-const createNewMapButton = document.getElementById("mapButton")
-createNewMapButton.addEventListener('click', () => {
-
-  const widget = new MapWidget("Map View","workspace");
+  const createChartButton = document.getElementById("chartButton");
+createChartButton.addEventListener('click', () => {
+  const widget = new chartWidget("Gráfico", "workspace", current_data);
   widget_list.push(widget);
   widget.render();
-});
+}); 
+
+
 
 
 //Lógica de updates dos widgets
 
-// function updateWidgets(currentTime) {
+function updateWidgets(currentTime) {
 
 
-//     // Atualiza todos os widgets da tela
-//     for (let widget of widget_list) {
-//         widget.update();
-//     }
-
-// }
-function updateWidgets() {
+    // Atualiza todos os widgets da tela
     for (let widget of widget_list) {
-        widget.update(current_data); 
+        widget.update();
     }
+
 }
+
 document.addEventListener('DOMContentLoaded', () => {
     
 

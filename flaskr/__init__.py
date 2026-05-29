@@ -3,22 +3,19 @@ import serial
 import threading
 import os
 import time
+import random
 from flask_socketio import SocketIO, send, emit
 
 
-PORTA = 'COM1' #Porta de entrada de dados
+PORTA = 'COM3' #Porta de entrada de dados
 BAUD = 9600 
 
-porta_serial = None
-thread = None
-try:
-    porta_serial = serial.Serial(PORTA, BAUD) #Configura a porta serial
-    porta_serial.timeout = 2
-except serial.SerialException as exc:
-    porta_serial = None
-    print(f"Aviso: não foi possível abrir a porta serial {PORTA}: {exc}")
-
+porta_serial = serial.Serial(PORTA, BAUD) #Configura a porta serial
+porta_serial.timeout = 2
 socketio = SocketIO()
+
+
+
 
 def create_app(test_config=None):
     app = Flask(__name__, instance_relative_config=True)
@@ -46,40 +43,24 @@ def create_app(test_config=None):
 
 def read_serial():
     contador = 0
-    lat_atual = -19.9167
-    lng_atual = -43.9345
     while True:
         contador += 1
-        time.sleep(1)
-
-        lat_atual += 0.0005 
-        lng_atual += 0.0005
+        time.sleep(2)
         
-        pacote_completo = {
-            # Os dados brutos para o seu widget de terminal continuam normais
-            "sensores_brutos": {
-                "1": 1000 + (contador * 5),
-                "2": 99.9 - (contador * 0.1)
-            },
-            
-            # Os aviões agora viajam dentro de uma LISTA []
-            "avioes": [
-                {"id": "PR-XYZ", "lat": round(lat_atual, 6), "lng": round(lng_atual, 6), "altitude": 10500},
-                {"id": "PT-ABC", "lat": round(lat_atual - 0.01, 6), "lng": round(lng_atual, 6), "altitude": 12000}
-            ]
+        dados = {
+            "1": 1000 + (contador * 5),
+            "2": 99.9 - (contador * 0.1),
+            "Temperatura": round(random.uniform(20, 30), 2),
+            "Umidade": round(random.uniform(40, 80), 2),
+            "Pressão": round(random.uniform(1000, 1025), 2),
+            "Luminosidade": round(random.uniform(100, 900), 2)
         }
-        
-        socketio.emit('new_data', pacote_completo)
+        # serial_input = porta_serial.readline()
+        socketio.emit('new_data', dados)
 
 @socketio.on('connect')
 def init_connection():
-    global thread 
-    
-    if thread is None:
-        print("Iniciando a transmissão de dados do avião...")
-        thread = socketio.start_background_task(read_serial)
-    else:
-        print("Cliente conectado, mas o loop já está rodando.")
+    socketio.start_background_task(read_serial)
 
 if __name__ == '__main__':
     app = create_app()
