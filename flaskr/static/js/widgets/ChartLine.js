@@ -205,12 +205,13 @@ export default class chartWidget extends BaseWidget {
         this.refreshKeys();
 
         // guarda o valor de cada chave numérica no respectivo buffer
+        const now = Date.now();
         for (const [key, value] of Object.entries(this.data)) {
             const num = parseFloat(value);
             if (!Number.isFinite(num)) continue;
             if (!this.buffers[key]) this.buffers[key] = [];
             const buf = this.buffers[key];
-            buf.push(num);
+            buf.push({ t: now, v: num }); // armazena horário + valor
             if (buf.length > this.maxPoints) buf.shift();
         }
 
@@ -237,20 +238,26 @@ export default class chartWidget extends BaseWidget {
             return;
         }
 
-        // margens para os eixos
-        const mL = 44, mR = 10, mT = 10, mB = 18;
+        // margens para os eixos (mB maior para caber os horários)
+        const mL = 44, mR = 10, mT = 10, mB = 28;
         const plotW = W - mL - mR;
         const plotH = H - mT - mB;
         if (plotW <= 0 || plotH <= 0) return;
 
         // escala Y automática, com 10% de folga
-        let min = Math.min(...buf);
-        let max = Math.max(...buf);
+        const values = buf.map(p => p.v);
+        let min = Math.min(...values);
+        let max = Math.max(...values);
         if (min === max) { min -= 1; max += 1; } // evita divisão por zero quando o valor é constante
         const pad = (max - min) * 0.1;
         min -= pad; max += pad;
 
-        const xFor = (i) => mL + (buf.length === 1 ? plotW / 2 : (i / (buf.length - 1)) * plotW);
+        // intervalo de tempo do buffer (eixo X)
+        const t0 = buf[0].t;
+        const t1 = buf[buf.length - 1].t;
+        const tSpan = t1 - t0;
+
+        const xFor = (t) => mL + (tSpan === 0 ? plotW / 2 : ((t - t0) / tSpan) * plotW);
         const yFor = (v) => mT + plotH - ((v - min) / (max - min)) * plotH;
 
         // grade horizontal + rótulos do eixo Y
@@ -271,22 +278,45 @@ export default class chartWidget extends BaseWidget {
             ctx.fillText(v.toFixed(1), mL - 6, y);
         }
 
+        // grade vertical + rótulos do eixo X (horário)
+        ctx.fillStyle = '#9ca3af';
+        ctx.textBaseline = 'top';
+        const xTicks = 3;
+        for (let i = 0; i <= xTicks; i++) {
+            const frac = i / xTicks;
+            const x = mL + frac * plotW;
+            const t = t0 + frac * tSpan;
+
+            ctx.strokeStyle = '#374151';
+            ctx.beginPath();
+            ctx.moveTo(x, mT);
+            ctx.lineTo(x, mT + plotH);
+            ctx.stroke();
+
+            // alinhamento nas pontas para o texto não vazar do gráfico
+            if (i === 0) ctx.textAlign = 'left';
+            else if (i === xTicks) ctx.textAlign = 'right';
+            else ctx.textAlign = 'center';
+            ctx.fillText(this.formatTime(t), x, mT + plotH + 5);
+        }
+
         // linha do dado
         ctx.strokeStyle = this.lineColor;
         ctx.lineWidth = 2;
         ctx.lineJoin = 'round';
         ctx.beginPath();
-        buf.forEach((v, i) => {
-            const x = xFor(i);
-            const y = yFor(v);
+        buf.forEach((p, i) => {
+            const x = xFor(p.t);
+            const y = yFor(p.v);
             if (i === 0) ctx.moveTo(x, y);
             else ctx.lineTo(x, y);
         });
         ctx.stroke();
 
         // ponto final destacado
-        const lx = xFor(buf.length - 1);
-        const ly = yFor(buf[buf.length - 1]);
+        const last = buf[buf.length - 1];
+        const lx = xFor(last.t);
+        const ly = yFor(last.v);
         ctx.fillStyle = this.lineColor;
         ctx.beginPath();
         ctx.arc(lx, ly, 3, 0, Math.PI * 2);
@@ -294,6 +324,13 @@ export default class chartWidget extends BaseWidget {
 
         // atualiza a leitura do valor atual
         this.readout.style.color = this.lineColor;
-        this.readout.innerText = buf[buf.length - 1].toFixed(2);
+        this.readout.innerText = last.v.toFixed(2);
+    }
+
+    // Formata um timestamp (ms) como HH:MM:SS
+    formatTime(ms) {
+        const d = new Date(ms);
+        return [d.getHours(), d.getMinutes(), d.getSeconds()]
+            .map(u => String(u).padStart(2, '0')).join(':');
     }
 }
