@@ -25,6 +25,8 @@ export default class BaseWidget {
         this.resize_handle = document.createElement('div');
         this.resize_handle.className = 'widget-resize-handle';
 
+        this.element.style.width = '300px'; 
+        this.element.style.height = '200px';
 
         this.element.appendChild(this.header);
         this.element.appendChild(this.content);

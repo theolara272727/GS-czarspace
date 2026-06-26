@@ -8,6 +8,8 @@ export default class rawDataWidget extends BaseWidget{
         this.lineCounter = 0;
         this.update()
         this.data = data;
+        this.element.style.width = '300px'; 
+        this.element.style.height = '200px';
     }
     update(deltaTime){
         if(this.data != undefined){

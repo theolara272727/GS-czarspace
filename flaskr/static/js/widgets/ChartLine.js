@@ -1,11 +1,15 @@
 import BaseWidget from "./BaseWidget.js";
 
+const Chart = window.Chart;
+// Lembre-se de garantir que o Chart.js está importado no seu projeto.
+// Exemplo: import Chart from 'chart.js/auto'; (se estiver usando bundler)
+
 export default class chartWidget extends BaseWidget {
     constructor(title, idContainerDestino, data) {
         super(title, idContainerDestino);
 
-        this.data = data;            // referência a current_data (atualizada in-place pelo main.js)
-        this.maxPoints = 100;        // quantos pontos ficam visíveis no buffer
+        this.data = data;                // referência a current_data (atualizada in-place pelo main.js)
+        this.maxPoints = 40;        // quantos pontos ficam visíveis no buffer
         this.buffers = {};           // { chave: [valor, valor, ...] } -- histórico por dado
         this.selectedKey = null;     // chave atualmente plotada
         this.knownKeys = new Set();  // chaves já adicionadas ao <select>
@@ -21,9 +25,10 @@ export default class chartWidget extends BaseWidget {
         this.buildUI();
         this.setupCanvas();
 
-        // limpeza: ao fechar o widget, para de observar o redimensionamento
+        // limpeza: ao fechar o widget, desconecta o observer e destrói o gráfico
         this.closeWidget.addEventListener('click', () => {
             if (this.resizeObserver) this.resizeObserver.disconnect();
+            if (this.chart) this.chart.destroy();
         });
     }
 
@@ -129,8 +134,6 @@ export default class chartWidget extends BaseWidget {
 
         this.content.appendChild(this.configBar);
         this.content.appendChild(this.canvasWrapper);
-
-        this.ctx = this.canvas.getContext('2d');
     }
 
     // Cria um botão de controle com o estilo do tema
@@ -149,27 +152,116 @@ export default class chartWidget extends BaseWidget {
         return btn;
     }
 
-    // Observa o redimensionamento do widget para redesenhar o gráfico
+    // Instancia o Chart.js e observa redimensionamento
     setupCanvas() {
+        this.ctx = this.canvas.getContext('2d');
+
+        // Plugin interno para desenhar a mensagem "sem dados"
+        const noDataPlugin = {
+            id: 'noDataText',
+            afterDraw: (chart) => {
+                if (chart.data.datasets[0].data.length === 0) {
+                    const ctx = chart.ctx;
+                    const width = chart.width;
+                    const height = chart.height;
+                    
+                    chart.clear();
+                    ctx.save();
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillStyle = '#9ca3af';
+                    ctx.font = '12px monospace';
+                    ctx.fillText('sem dados para "' + (this.selectedKey || '') + '"', width / 2, height / 2);
+                    ctx.restore();
+                }
+            }
+        };
+
+        this.chart = new Chart(this.ctx, {
+            type: 'line',
+            data: {
+                labels: [], // Eixo X automático
+                datasets: [{
+                    label: 'Dado',
+                    data: [],
+                    borderColor: this.lineColor,
+                    backgroundColor: this.lineColor,
+                    borderWidth: 2,
+                    pointBackgroundColor: this.lineColor,
+                    tension: 0 
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false, // Desliga a animação para o gráfico fluir em tempo real (snappy)
+                layout: {
+                    padding: { top: 10, bottom: 10, left: 10, right: 10 }
+                },
+                scales: {
+                    x: {
+                        display: true, 
+                        grid: {
+                            color: '#374151',
+                            drawBorder: false
+                        },
+                        ticks: {
+                            display: true,       
+                            color: '#9ca3af',
+                            font: { family: 'monospace', size: 12 },
+
+                            maxTicksLimit: 10    
+                        }
+                    },
+                    y: {
+                        grid: {
+                            color: '#374151',
+                            drawBorder: false
+                        },
+                        ticks: {
+                            color: '#9ca3af',
+                            font: { family: 'monospace', size: 10 },
+                            maxTicksLimit: 5
+                        },
+                        border: { display: false }
+                    }
+                },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        enabled: true,             // Ativa o balão de texto
+                        intersect: false,          // Mostra o balão mesmo se o mouse não estiver exatamente em cima do pontinho (melhora a usabilidade)
+                        mode: 'index',             // Foca no ponto mais próximo do eixo X
+                        backgroundColor: '#1f2937', // Fundo escuro combinando com o tema do widget
+                        titleColor: '#9ca3af',      // Cor do título (Eixo X / Timestamp)
+                        bodyColor: '#e0e6ed',       // Cor do texto do valor (Eixo Y)
+                        borderColor: '#374151',     // Borda sutil
+                        borderWidth: 1,
+                        font: {
+                            family: 'monospace'    // Mantém o padrão de fonte que você está usando
+                        },
+                        callbacks: {
+                            // Customiza o título do balão (Eixo X)
+                            title: function(context) {
+                                return 'Tempo: ' + context[0].label;
+                            },
+                            // Customiza o texto principal do balão (Eixo Y)
+                            label: function(context) {
+                                // context.parsed.y pega o valor numérico puro do ponto atual
+                                return 'Valor: ' + context.parsed.y.toFixed(2);
+                            }
+                        }
+                    }
+                }
+            },
+            plugins: [noDataPlugin]
+        });
+
+  
         this.resizeObserver = new ResizeObserver(() => {
-            this.fitCanvas();
-            this.draw();
+            if(this.chart) this.chart.resize();
         });
         this.resizeObserver.observe(this.canvasWrapper);
-        this.fitCanvas();
-    }
-
-    // Ajusta a resolução do canvas ao tamanho real (com correção de DPI)
-    fitCanvas() {
-        const dpr = window.devicePixelRatio || 1;
-        const w = this.canvasWrapper.clientWidth;
-        const h = this.canvasWrapper.clientHeight;
-        if (w === 0 || h === 0) return; // ainda não está no DOM / sem layout
-        this.canvas.width = Math.round(w * dpr);
-        this.canvas.height = Math.round(h * dpr);
-        this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // desenhar em coordenadas CSS
-        this.cssW = w;
-        this.cssH = h;
     }
 
     // Adiciona ao <select> qualquer chave numérica nova que apareça nos dados
@@ -204,96 +296,52 @@ export default class chartWidget extends BaseWidget {
         if (this.paused) return; // pausado: não recebe dados novos
         this.refreshKeys();
 
+        const agora = new Date();
+        const timestampStr = `${agora.getHours().toString().padStart(2, '0')}:${agora.getMinutes().toString().padStart(2, '0')}:${agora.getSeconds().toString().padStart(2, '0')}.${Math.floor(agora.getMilliseconds() / 100)}`;
+
+
         // guarda o valor de cada chave numérica no respectivo buffer
         for (const [key, value] of Object.entries(this.data)) {
             const num = parseFloat(value);
             if (!Number.isFinite(num)) continue;
             if (!this.buffers[key]) this.buffers[key] = [];
             const buf = this.buffers[key];
-            buf.push(num);
+            buf.push({ value: num, time: timestampStr });
             if (buf.length > this.maxPoints) buf.shift();
         }
 
         this.draw();
     }
 
-    // Desenha o gráfico de linha do dado selecionado
+    // Atualiza o gráfico de linha do dado selecionado utilizando o Chart.js
     draw() {
-        if (!this.ctx || !this.cssW) return;
-        const ctx = this.ctx;
-        const W = this.cssW;
-        const H = this.cssH;
-
-        ctx.clearRect(0, 0, W, H);
+        if (!this.chart) return;
 
         const buf = this.selectedKey ? this.buffers[this.selectedKey] : null;
 
         if (!buf || buf.length === 0) {
             this.readout.innerText = '--';
-            ctx.fillStyle = '#9ca3af';
-            ctx.font = '12px monospace';
-            ctx.textAlign = 'center';
-            ctx.fillText('sem dados para "' + (this.selectedKey || '') + '"', W / 2, H / 2);
+            this.chart.data.labels = [];
+            this.chart.data.datasets[0].data = [];
+            this.chart.update();
             return;
         }
 
-        // margens para os eixos
-        const mL = 44, mR = 10, mT = 10, mB = 18;
-        const plotW = W - mL - mR;
-        const plotH = H - mT - mB;
-        if (plotW <= 0 || plotH <= 0) return;
+        // Atualiza cores caso o usuário tenha alterado
+        this.chart.data.datasets[0].borderColor = this.lineColor;
+        this.chart.data.datasets[0].backgroundColor = this.lineColor;
+        this.chart.data.datasets[0].pointBackgroundColor = this.lineColor;
 
-        // escala Y automática, com 10% de folga
-        let min = Math.min(...buf);
-        let max = Math.max(...buf);
-        if (min === max) { min -= 1; max += 1; } // evita divisão por zero quando o valor é constante
-        const pad = (max - min) * 0.1;
-        min -= pad; max += pad;
+        // Passa os dados e cria labels vazias/numeradas para o eixo X do Chart.js
+        this.chart.data.labels = buf.map(item => item.time);   // Eixo X (Timestamps)
+        this.chart.data.datasets[0].data = buf.map(item => item.value);
 
-        const xFor = (i) => mL + (buf.length === 1 ? plotW / 2 : (i / (buf.length - 1)) * plotW);
-        const yFor = (v) => mT + plotH - ((v - min) / (max - min)) * plotH;
 
-        // grade horizontal + rótulos do eixo Y
-        ctx.strokeStyle = '#374151';
-        ctx.fillStyle = '#9ca3af';
-        ctx.lineWidth = 1;
-        ctx.font = '10px monospace';
-        ctx.textAlign = 'right';
-        ctx.textBaseline = 'middle';
-        const ticks = 4;
-        for (let i = 0; i <= ticks; i++) {
-            const v = min + (i / ticks) * (max - min);
-            const y = yFor(v);
-            ctx.beginPath();
-            ctx.moveTo(mL, y);
-            ctx.lineTo(W - mR, y);
-            ctx.stroke();
-            ctx.fillText(v.toFixed(1), mL - 6, y);
-        }
+        // Solicita ao Chart.js que redesenhe a tela
+        this.chart.update();
 
-        // linha do dado
-        ctx.strokeStyle = this.lineColor;
-        ctx.lineWidth = 2;
-        ctx.lineJoin = 'round';
-        ctx.beginPath();
-        buf.forEach((v, i) => {
-            const x = xFor(i);
-            const y = yFor(v);
-            if (i === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
-        });
-        ctx.stroke();
-
-        // ponto final destacado
-        const lx = xFor(buf.length - 1);
-        const ly = yFor(buf[buf.length - 1]);
-        ctx.fillStyle = this.lineColor;
-        ctx.beginPath();
-        ctx.arc(lx, ly, 3, 0, Math.PI * 2);
-        ctx.fill();
-
-        // atualiza a leitura do valor atual
+        // atualiza a leitura do valor atual na interface
         this.readout.style.color = this.lineColor;
-        this.readout.innerText = buf[buf.length - 1].toFixed(2);
+        this.readout.innerText = buf[buf.length - 1]['value'].toFixed(2);
     }
 }
