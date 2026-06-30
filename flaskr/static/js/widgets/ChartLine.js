@@ -1,48 +1,59 @@
 import BaseWidget from "./BaseWidget.js";
 
 const Chart = window.Chart;
-// Lembre-se de garantir que o Chart.js está importado no seu projeto.
-// Exemplo: import Chart from 'chart.js/auto'; (se estiver usando bundler)
 
-export default class chartWidget extends BaseWidget {
-    constructor(title, idContainerDestino, data) {
+export default class ChartLineWidget extends BaseWidget {
+    constructor(title, idContainerDestino) {
         super(title, idContainerDestino);
 
-        this.data = data;                // referência a current_data (atualizada in-place pelo main.js)
-        this.maxPoints = 40;        // quantos pontos ficam visíveis no buffer
-        this.buffers = {};           // { chave: [valor, valor, ...] } -- histórico por dado
-        this.selectedKey = null;     // chave atualmente plotada
-        this.knownKeys = new Set();  // chaves já adicionadas ao <select>
-        this.lineColor = '#d03379';  // cor da linha (alterável pelo usuário)
-        this.paused = false;         // quando true, ignora dados novos
+        this.maxPoints = 40;         
+        this.buffers = {};           
+        this.knownKeys = new Set();  
+        this.paused = false;         
 
-        // o conteúdo precisa preencher o espaço abaixo do header
+        // 1. O novo estado de multilinhas e a paleta de cores automática
+        this.activeKeys = []; // Estrutura: [ { key: 'Temperatura', color: '#...' }, ... ]
+        this.palette = [
+            '#d03379', // Rosa
+            '#33d08a', // Verde
+            '#3379d0', // Azul
+            '#d08a33', // Laranja
+            '#a333d0', // Roxo
+            '#33d0d0', // Ciano
+            '#d0d033'  // Amarelo
+        ];
+
         this.content.style.flex = '1';
         this.content.style.minHeight = '0';
         this.content.style.padding = '6px';
         this.content.style.gap = '6px';
+        this.content.style.display = 'flex';
+        this.content.style.flexDirection = 'column';
 
         this.buildUI();
         this.setupCanvas();
 
-        // limpeza: ao fechar o widget, desconecta o observer e destrói o gráfico
         this.closeWidget.addEventListener('click', () => {
             if (this.resizeObserver) this.resizeObserver.disconnect();
             if (this.chart) this.chart.destroy();
         });
     }
 
-    // Monta a barra de configuração (seletor + leitura) e a área do gráfico
     buildUI() {
         this.configBar = document.createElement('div');
         this.configBar.style.display = 'flex';
-        this.configBar.style.alignItems = 'center';
-        this.configBar.style.justifyContent = 'space-between';
+        this.configBar.style.flexDirection = 'column';
         this.configBar.style.gap = '8px';
         this.configBar.style.flexShrink = '0';
-        this.configBar.style.flexWrap = 'wrap'; // quebra linha se o widget estiver estreito
 
-        // seletor de qual dado plotar
+        // Linha 1: Controles Principais
+        const controlsRow = document.createElement('div');
+        controlsRow.style.display = 'flex';
+        controlsRow.style.alignItems = 'center';
+        controlsRow.style.gap = '6px';
+        controlsRow.style.flexWrap = 'wrap';
+
+        // O Seletor agora age como um botão de "Adicionar"
         this.select = document.createElement('select');
         this.select.style.backgroundColor = '#1f2937';
         this.select.style.color = '#e0e6ed';
@@ -52,74 +63,58 @@ export default class chartWidget extends BaseWidget {
         this.select.style.fontFamily = 'inherit';
         this.select.style.fontSize = '0.8rem';
         this.select.style.cursor = 'pointer';
-        this.select.addEventListener('mousedown', (e) => e.stopPropagation());
-        this.select.addEventListener('change', () => {
-            this.selectedKey = this.select.value;
-            this.draw();
-        });
-
+        
         const placeholder = document.createElement('option');
         placeholder.value = '';
-        placeholder.innerText = 'aguardando dados...';
+        placeholder.innerText = '+ Adicionar Dado...';
         this.select.appendChild(placeholder);
 
-        // botão pausar / retomar o recebimento de dados
+        this.select.addEventListener('mousedown', (e) => e.stopPropagation());
+        
+        // 2. Lógica para adicionar uma nova linha
+        this.select.addEventListener('change', () => {
+            const selectedVal = this.select.value;
+            
+            // Verifica se escolheu algo válido e se já não está ativo
+            if (selectedVal && !this.activeKeys.find(k => k.key === selectedVal)) {
+                // Pega a próxima cor da paleta baseado na quantidade de linhas
+                const nextColor = this.palette[this.activeKeys.length % this.palette.length];
+                
+                this.activeKeys.push({ key: selectedVal, color: nextColor });
+                this.renderChips();
+                this.draw();
+            }
+            
+            // Volta o select para o placeholder
+            this.select.value = '';
+        });
+
         this.pauseBtn = this.makeButton('Pausar');
         this.pauseBtn.addEventListener('click', () => {
             this.paused = !this.paused;
             this.pauseBtn.innerText = this.paused ? 'Retomar' : 'Pausar';
-            // realça o botão enquanto está pausado
             this.pauseBtn.style.backgroundColor = this.paused ? '#374151' : '#1f2937';
         });
 
-        // botão reset: limpa o histórico de todos os dados
         this.resetBtn = this.makeButton('Reset');
         this.resetBtn.addEventListener('click', () => {
             this.buffers = {};
             this.draw();
         });
 
-        // seletor de cor da linha
-        this.colorInput = document.createElement('input');
-        this.colorInput.type = 'color';
-        this.colorInput.value = this.lineColor;
-        this.colorInput.title = 'Cor da linha';
-        this.colorInput.style.width = '34px';
-        this.colorInput.style.height = '26px';
-        this.colorInput.style.padding = '0';
-        this.colorInput.style.border = '1px solid #374151';
-        this.colorInput.style.borderRadius = '4px';
-        this.colorInput.style.backgroundColor = '#1f2937';
-        this.colorInput.style.cursor = 'pointer';
-        this.colorInput.addEventListener('mousedown', (e) => e.stopPropagation());
-        this.colorInput.addEventListener('input', () => {
-            this.lineColor = this.colorInput.value;
-            this.draw();
-        });
+        controlsRow.appendChild(this.select);
+        controlsRow.appendChild(this.pauseBtn);
+        controlsRow.appendChild(this.resetBtn);
 
-        // leitura do valor atual
-        this.readout = document.createElement('span');
-        this.readout.style.fontSize = '0.85rem';
-        this.readout.style.color = this.lineColor;
-        this.readout.style.fontWeight = 'bold';
-        this.readout.style.marginLeft = 'auto'; // empurra a leitura para a direita
-        this.readout.innerText = '--';
+        // Linha 2: Os "Chips" (Etiquetas das linhas ativas)
+        this.chipsRow = document.createElement('div');
+        this.chipsRow.style.display = 'flex';
+        this.chipsRow.style.flexWrap = 'wrap';
+        this.chipsRow.style.gap = '6px';
 
-        // grupo da esquerda: seletor + controles
-        const controls = document.createElement('div');
-        controls.style.display = 'flex';
-        controls.style.alignItems = 'center';
-        controls.style.gap = '6px';
-        controls.style.flexWrap = 'wrap';
-        controls.appendChild(this.select);
-        controls.appendChild(this.pauseBtn);
-        controls.appendChild(this.resetBtn);
-        controls.appendChild(this.colorInput);
+        this.configBar.appendChild(controlsRow);
+        this.configBar.appendChild(this.chipsRow);
 
-        this.configBar.appendChild(controls);
-        this.configBar.appendChild(this.readout);
-
-        // wrapper do canvas (ocupa o espaço restante)
         this.canvasWrapper = document.createElement('div');
         this.canvasWrapper.style.position = 'relative';
         this.canvasWrapper.style.flex = '1';
@@ -136,7 +131,6 @@ export default class chartWidget extends BaseWidget {
         this.content.appendChild(this.canvasWrapper);
     }
 
-    // Cria um botão de controle com o estilo do tema
     makeButton(label) {
         const btn = document.createElement('button');
         btn.innerText = label;
@@ -152,26 +146,72 @@ export default class chartWidget extends BaseWidget {
         return btn;
     }
 
-    // Instancia o Chart.js e observa redimensionamento
+    // 3. Desenha as etiquetas para o usuário saber quais linhas estão ativas
+    renderChips() {
+        this.chipsRow.innerHTML = ''; // Limpa a linha
+        
+        this.activeKeys.forEach((item, index) => {
+            const chip = document.createElement('div');
+            chip.style.display = 'flex';
+            chip.style.alignItems = 'center';
+            chip.style.backgroundColor = '#374151';
+            chip.style.padding = '2px 8px';
+            chip.style.borderRadius = '12px';
+            chip.style.fontSize = '0.75rem';
+            chip.style.color = '#e0e6ed';
+            chip.style.gap = '6px';
+
+            // Bolinha colorida
+            const colorDot = document.createElement('div');
+            colorDot.style.width = '10px';
+            colorDot.style.height = '10px';
+            colorDot.style.borderRadius = '50%';
+            colorDot.style.backgroundColor = item.color;
+
+            // Texto do dado
+            const label = document.createElement('span');
+            label.innerText = item.key;
+
+            // Botão de remover (X)
+            const closeBtn = document.createElement('span');
+            closeBtn.innerText = '×';
+            closeBtn.style.cursor = 'pointer';
+            closeBtn.style.color = '#9ca3af';
+            closeBtn.style.fontWeight = 'bold';
+            closeBtn.style.fontSize = '1rem';
+            closeBtn.style.lineHeight = '1';
+            
+            closeBtn.addEventListener('click', () => {
+                // Remove do array e manda redesenhar
+                this.activeKeys.splice(index, 1);
+                this.renderChips();
+                this.draw();
+            });
+
+            chip.appendChild(colorDot);
+            chip.appendChild(label);
+            chip.appendChild(closeBtn);
+            
+            this.chipsRow.appendChild(chip);
+        });
+    }
+
     setupCanvas() {
         this.ctx = this.canvas.getContext('2d');
 
-        // Plugin interno para desenhar a mensagem "sem dados"
         const noDataPlugin = {
             id: 'noDataText',
             afterDraw: (chart) => {
-                if (chart.data.datasets[0].data.length === 0) {
+                // Se não houver datasets, mostra o aviso
+                if (chart.data.datasets.length === 0) {
                     const ctx = chart.ctx;
-                    const width = chart.width;
-                    const height = chart.height;
-                    
                     chart.clear();
                     ctx.save();
                     ctx.textAlign = 'center';
                     ctx.textBaseline = 'middle';
                     ctx.fillStyle = '#9ca3af';
                     ctx.font = '12px monospace';
-                    ctx.fillText('sem dados para "' + (this.selectedKey || '') + '"', width / 2, height / 2);
+                    ctx.fillText('Nenhum dado selecionado', chart.width / 2, chart.height / 2);
                     ctx.restore();
                 }
             }
@@ -180,76 +220,50 @@ export default class chartWidget extends BaseWidget {
         this.chart = new Chart(this.ctx, {
             type: 'line',
             data: {
-                labels: [], // Eixo X automático
-                datasets: [{
-                    label: 'Dado',
-                    data: [],
-                    borderColor: this.lineColor,
-                    backgroundColor: this.lineColor,
-                    borderWidth: 2,
-                    pointBackgroundColor: this.lineColor,
-                    tension: 0 
-                }]
+                labels: [], 
+                datasets: [] // Começa vazio, os datasets serão injetados dinamicamente
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                animation: false, // Desliga a animação para o gráfico fluir em tempo real (snappy)
+                animation: false, 
                 layout: {
                     padding: { top: 10, bottom: 10, left: 10, right: 10 }
                 },
                 scales: {
                     x: {
-                        display: true, 
-                        grid: {
-                            color: '#374151',
-                            drawBorder: false
-                        },
-                        ticks: {
-                            display: true,       
-                            color: '#9ca3af',
-                            font: { family: 'monospace', size: 12 },
-
-                            maxTicksLimit: 10    
-                        }
+                        grid: { color: '#374151', drawBorder: false },
+                        ticks: { color: '#9ca3af', font: { family: 'monospace', size: 12 }, maxTicksLimit: 10 }
                     },
                     y: {
-                        grid: {
-                            color: '#374151',
-                            drawBorder: false
-                        },
-                        ticks: {
-                            color: '#9ca3af',
-                            font: { family: 'monospace', size: 10 },
-                            maxTicksLimit: 5
-                        },
+                        grid: { color: '#374151', drawBorder: false },
+                        ticks: { color: '#9ca3af', font: { family: 'monospace', size: 10 }, maxTicksLimit: 5 },
                         border: { display: false }
                     }
                 },
                 plugins: {
-                    legend: { display: false },
+                    // Ligamos a legenda oficial do Chart.js!
+                    legend: { 
+                        display: true,
+                        labels: {
+                            color: '#9ca3af',
+                            font: { family: 'monospace' },
+                            boxWidth: 12
+                        }
+                    },
                     tooltip: {
-                        enabled: true,             // Ativa o balão de texto
-                        intersect: false,          // Mostra o balão mesmo se o mouse não estiver exatamente em cima do pontinho (melhora a usabilidade)
-                        mode: 'index',             // Foca no ponto mais próximo do eixo X
-                        backgroundColor: '#1f2937', // Fundo escuro combinando com o tema do widget
-                        titleColor: '#9ca3af',      // Cor do título (Eixo X / Timestamp)
-                        bodyColor: '#e0e6ed',       // Cor do texto do valor (Eixo Y)
-                        borderColor: '#374151',     // Borda sutil
+                        enabled: true,             
+                        intersect: false,          
+                        mode: 'index', // Isso é PERFEITO para múltiplas linhas, mostra todas juntas no hover!
+                        backgroundColor: '#1f2937', 
+                        titleColor: '#9ca3af',      
+                        bodyColor: '#e0e6ed',       
+                        borderColor: '#374151',     
                         borderWidth: 1,
-                        font: {
-                            family: 'monospace'    // Mantém o padrão de fonte que você está usando
-                        },
+                        font: { family: 'monospace' },
                         callbacks: {
-                            // Customiza o título do balão (Eixo X)
-                            title: function(context) {
-                                return 'Tempo: ' + context[0].label;
-                            },
-                            // Customiza o texto principal do balão (Eixo Y)
-                            label: function(context) {
-                                // context.parsed.y pega o valor numérico puro do ponto atual
-                                return 'Valor: ' + context.parsed.y.toFixed(2);
-                            }
+                            title: function(context) { return 'Tempo: ' + context[0].label; },
+                            label: function(context) { return context.dataset.label + ': ' + context.parsed.y.toFixed(2); }
                         }
                     }
                 }
@@ -257,91 +271,90 @@ export default class chartWidget extends BaseWidget {
             plugins: [noDataPlugin]
         });
 
-  
         this.resizeObserver = new ResizeObserver(() => {
             if(this.chart) this.chart.resize();
         });
         this.resizeObserver.observe(this.canvasWrapper);
     }
 
-    // Adiciona ao <select> qualquer chave numérica nova que apareça nos dados
-    refreshKeys() {
-        if (this.data == undefined) return;
-        for (const [key, value] of Object.entries(this.data)) {
-            if (!Number.isFinite(parseFloat(value))) continue; // ignora chaves não-numéricas
+    refreshKeys(sensores) {
+        if (!sensores) return;
+        
+        for (const [key, value] of Object.entries(sensores)) {
+            if (!Number.isFinite(parseFloat(value))) continue; 
             if (this.knownKeys.has(key)) continue;
 
             this.knownKeys.add(key);
             const opt = document.createElement('option');
             opt.value = key;
             opt.innerText = key;
-
-            // remove o placeholder na primeira chave válida
-            if (this.select.options.length === 1 && this.select.options[0].value === '') {
-                this.select.remove(0);
-            }
             this.select.appendChild(opt);
 
-            // seleciona a primeira chave automaticamente
-            if (this.selectedKey === null) {
-                this.selectedKey = key;
-                this.select.value = key;
+            // Auto-seleciona a PRIMEIRA chave que o sistema descobrir (facilita pro usuário)
+            if (this.activeKeys.length === 0 && !this.primeiraChaveAdicionada) {
+                this.primeiraChaveAdicionada = true;
+                this.activeKeys.push({ key: key, color: this.palette[0] });
+                this.renderChips();
             }
         }
     }
 
-    // Chamado pelo main.js a cada evento 'new_data'
-    update(deltaTime) {
-        if (this.data == undefined) return;
-        if (this.paused) return; // pausado: não recebe dados novos
-        this.refreshKeys();
+    update(dados) {
+        if (!dados || !dados.sensores) return;
+        if (this.paused) return; 
+        
+        this.refreshKeys(dados.sensores);
 
         const agora = new Date();
         const timestampStr = `${agora.getHours().toString().padStart(2, '0')}:${agora.getMinutes().toString().padStart(2, '0')}:${agora.getSeconds().toString().padStart(2, '0')}.${Math.floor(agora.getMilliseconds() / 100)}`;
 
-
-        // guarda o valor de cada chave numérica no respectivo buffer
-        for (const [key, value] of Object.entries(this.data)) {
+        for (const [key, value] of Object.entries(dados.sensores)) {
             const num = parseFloat(value);
             if (!Number.isFinite(num)) continue;
             if (!this.buffers[key]) this.buffers[key] = [];
+            
             const buf = this.buffers[key];
             buf.push({ value: num, time: timestampStr });
+            
             if (buf.length > this.maxPoints) buf.shift();
         }
 
         this.draw();
     }
 
-    // Atualiza o gráfico de linha do dado selecionado utilizando o Chart.js
+    // 4. O novo motor de desenho para múltiplas linhas
     draw() {
         if (!this.chart) return;
 
-        const buf = this.selectedKey ? this.buffers[this.selectedKey] : null;
-
-        if (!buf || buf.length === 0) {
-            this.readout.innerText = '--';
+        if (this.activeKeys.length === 0) {
             this.chart.data.labels = [];
-            this.chart.data.datasets[0].data = [];
+            this.chart.data.datasets = [];
             this.chart.update();
             return;
         }
 
-        // Atualiza cores caso o usuário tenha alterado
-        this.chart.data.datasets[0].borderColor = this.lineColor;
-        this.chart.data.datasets[0].backgroundColor = this.lineColor;
-        this.chart.data.datasets[0].pointBackgroundColor = this.lineColor;
+        // Pega as labels (Eixo X) baseadas na primeira linha ativa (já que os timestamps são os mesmos)
+        const firstKey = this.activeKeys[0].key;
+        const baseBuffer = this.buffers[firstKey];
+        
+        if (baseBuffer) {
+            this.chart.data.labels = baseBuffer.map(item => item.time);
+        }
 
-        // Passa os dados e cria labels vazias/numeradas para o eixo X do Chart.js
-        this.chart.data.labels = buf.map(item => item.time);   // Eixo X (Timestamps)
-        this.chart.data.datasets[0].data = buf.map(item => item.value);
+        // Reconstrói a lista de linhas dinamicamente
+        this.chart.data.datasets = this.activeKeys.map((item) => {
+            const bufferDaLinha = this.buffers[item.key] || [];
+            return {
+                label: item.key,
+                data: bufferDaLinha.map(d => d.value),
+                borderColor: item.color,
+                backgroundColor: item.color,
+                borderWidth: 2,
+                pointBackgroundColor: item.color,
+                tension: 0 
+            };
+        });
 
-
-        // Solicita ao Chart.js que redesenhe a tela
         this.chart.update();
-
-        // atualiza a leitura do valor atual na interface
-        this.readout.style.color = this.lineColor;
-        this.readout.innerText = buf[buf.length - 1]['value'].toFixed(2);
     }
 }
