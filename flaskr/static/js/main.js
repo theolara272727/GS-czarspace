@@ -2,7 +2,7 @@ import BaseWidget from './widgets/BaseWidget.js';
 import terminalWidget from './widgets/terminalWidget.js';
 import chartWidget from './widgets/ChartLine.js';
 
-//Websocket
+// WebSocket e Estado da Aplicação
 const socket = io();
 let current_data = {};
 const widget_list = [];
@@ -24,12 +24,9 @@ socket.on('new_data', (data) => {
         Object.assign(current_data, data);
     }
     updateWidgets();
-    
 });
 
-
-//Lógica de updates dos widgets
-
+// Lógica de updates dos widgets
 function updateWidgets() {
     for (let widget of widget_list) {
         widget.update();
@@ -96,7 +93,6 @@ async function saveModesToServer() {
     }
 }
 
-
 function loadMode(mode) {
     clearWorkspace();
     currentMode = mode;
@@ -127,161 +123,165 @@ function getCurrentModeSpec(name) {
 }
 
 function renderModesUI() {
-      const modesTab = document.getElementById('modes-tab');
-      const settingsModeList = document.getElementById('settingsModeList');
-      
-      modesTab.innerHTML = '';
-      settingsModeList.innerHTML = '';
+    const modesTab = document.getElementById('modes-tab');
+    const settingsModeList = document.getElementById('settingsModeList');
+    
+    modesTab.innerHTML = '';
+    settingsModeList.innerHTML = '';
 
-      savedModes.forEach((mode, modeIndex) => {
-          if (!mode.dataTypes) mode.dataTypes = [];
+    savedModes.forEach((mode, modeIndex) => {
+        if (!mode.dataTypes) mode.dataTypes = [];
 
-          const modeButton = document.createElement('div');
-          modeButton.className = 'button';
-          modeButton.textContent = mode.name;
-          if (modeIndex === 0) modeButton.classList.add('active-mode');
-          
-          modeButton.addEventListener('click', (event) => {
-              document.querySelectorAll('#modes-tab .button').forEach(btn => btn.classList.remove('active-mode'));
-              event.target.classList.add('active-mode');
-              loadMode(mode);
-          });
-          modesTab.appendChild(modeButton);
+        const modeButton = document.createElement('div');
+        modeButton.className = 'button';
+        modeButton.textContent = mode.name;
+        if (modeIndex === 0) modeButton.classList.add('active-mode');
+        
+        modeButton.addEventListener('click', (event) => {
+            document.querySelectorAll('#modes-tab .button').forEach(btn => btn.classList.remove('active-mode'));
+            event.target.classList.add('active-mode');
+            loadMode(mode);
+        });
+        modesTab.appendChild(modeButton);
 
-          const card = document.createElement('div');
-          card.className = 'mode-card';
+        const card = document.createElement('div');
+        card.className = 'mode-card';
 
-          // Cabeçalho do Card
-          const cardHeader = document.createElement('div');
-          cardHeader.className = 'mode-header';
-          
-          const nameSpan = document.createElement('span');
-          nameSpan.textContent = mode.name;
-          
-          const deleteBtn = document.createElement('button');
-          deleteBtn.className = 'delete-mode-btn';
-          deleteBtn.innerHTML = '🗑️';
-          deleteBtn.addEventListener('click', async () => {
-              if (confirm(`Deletar o modo "${mode.name}"?`)) {
-                  savedModes = savedModes.filter(m => m.name !== mode.name);
-                  await saveModesToServer();
-                  renderModesUI();
-              }
-          });
+        // Cabeçalho do Card
+        const cardHeader = document.createElement('div');
+        cardHeader.className = 'mode-header';
+        
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = mode.name;
+        
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'delete-mode-btn';
+        deleteBtn.title = 'Deletar Modo';
+        deleteBtn.innerHTML = `
+            <svg width="18" height="18" style="pointer-events: none; fill: none">
+                <use href="#trash-svg"></use>
+            </svg>
+        `;
+        deleteBtn.addEventListener('click', async () => {
+            if (confirm(`Deletar o modo "${mode.name}"?`)) {
+                savedModes = savedModes.filter(m => m.name !== mode.name);
+                await saveModesToServer();
+                renderModesUI();
+            }
+        });
 
-          cardHeader.appendChild(nameSpan);
-          cardHeader.appendChild(deleteBtn);
-          card.appendChild(cardHeader);
+        cardHeader.appendChild(nameSpan);
+        cardHeader.appendChild(deleteBtn);
+        card.appendChild(cardHeader);
 
-          const dataSection = document.createElement('div');
-          dataSection.className = 'data-types-section';
+        const dataSection = document.createElement('div');
+        dataSection.className = 'data-types-section';
 
-          const dataHeader = document.createElement('div');
-          dataHeader.className = 'data-types-header';
+        const dataHeader = document.createElement('div');
+        dataHeader.className = 'data-types-header';
 
+        const addDataBtn = document.createElement('button');
+        addDataBtn.className = 'add-datatype-btn';
+        addDataBtn.textContent = '+';
+        addDataBtn.addEventListener('click', async () => {
+            const newType = await askInput('Tipo de dado:');
+            if (newType) {
+                mode.dataTypes.push(newType);
+                await saveModesToServer();
+                renderModesUI();
+            }
+        });
+        dataHeader.appendChild(addDataBtn);
+        dataSection.appendChild(dataHeader);
 
-          const addDataBtn = document.createElement('button');
-          addDataBtn.className = 'add-datatype-btn';
-          addDataBtn.textContent = '+';
-          addDataBtn.addEventListener('click', async () => {
-              const newType = await askInput('Tipo de dado:');
-              if (newType) {
-                  mode.dataTypes.push(newType);
-                  await saveModesToServer();
-                  renderModesUI();
-              }
-          });
-          dataHeader.appendChild(addDataBtn);
-          dataSection.appendChild(dataHeader);
+        const dataList = document.createElement('ul');
+        dataList.className = 'data-types-list';
 
-          const dataList = document.createElement('ul');
-          dataList.className = 'data-types-list';
+        let draggedItemIndex = null;
 
-          let draggedItemIndex = null;
+        mode.dataTypes.forEach((dataType, dtIndex) => {
+            const dtItem = document.createElement('li');
+            dtItem.className = 'data-type-item';
+            dtItem.textContent = dataType;
+            dtItem.draggable = true; 
 
-          mode.dataTypes.forEach((dataType, dtIndex) => {
-              const dtItem = document.createElement('li');
-              dtItem.className = 'data-type-item';
-              dtItem.textContent = dataType;
-              dtItem.draggable = true; 
+            dtItem.addEventListener('dragstart', (e) => {
+                draggedItemIndex = dtIndex;
+                dtItem.classList.add('dragging');
+                e.dataTransfer.effectAllowed = 'move';
+            });
 
-              dtItem.addEventListener('dragstart', (e) => {
-                  draggedItemIndex = dtIndex;
-                  dtItem.classList.add('dragging');
-                  e.dataTransfer.effectAllowed = 'move';
-              });
+            dtItem.addEventListener('dragend', () => {
+                dtItem.classList.remove('dragging');
+                document.querySelectorAll('.data-type-item').forEach(el => el.classList.remove('drag-over'));
+            });
 
-              dtItem.addEventListener('dragend', () => {
-                  dtItem.classList.remove('dragging');
-                  document.querySelectorAll('.data-type-item').forEach(el => el.classList.remove('drag-over'));
-              });
+            dtItem.addEventListener('dragover', (e) => {
+                e.preventDefault(); 
+                dtItem.classList.add('drag-over');
+            });
 
-              dtItem.addEventListener('dragover', (e) => {
-                  e.preventDefault(); 
-                  dtItem.classList.add('drag-over');
-              });
+            dtItem.addEventListener('dragleave', () => {
+                dtItem.classList.remove('drag-over');
+            });
 
-              dtItem.addEventListener('dragleave', () => {
-                  dtItem.classList.remove('drag-over');
-              });
+            dtItem.addEventListener('drop', async (e) => {
+                e.preventDefault();
+                dtItem.classList.remove('drag-over');
+                
+                if (draggedItemIndex !== null && draggedItemIndex !== dtIndex) {
+                    const itemToMove = mode.dataTypes.splice(draggedItemIndex, 1)[0];
+                    mode.dataTypes.splice(dtIndex, 0, itemToMove);
+                    
+                    await saveModesToServer();
+                    renderModesUI(); 
+                }
+            });
 
-              dtItem.addEventListener('drop', async (e) => {
-                  e.preventDefault();
-                  dtItem.classList.remove('drag-over');
-                  
-                  if (draggedItemIndex !== null && draggedItemIndex !== dtIndex) {
-                      const itemToMove = mode.dataTypes.splice(draggedItemIndex, 1)[0];
-                      mode.dataTypes.splice(dtIndex, 0, itemToMove);
-                      
-                      await saveModesToServer();
-                      renderModesUI(); 
-                  }
-              });
+            const removeDtBtn = document.createElement('span');
+            removeDtBtn.textContent = '×';
+            removeDtBtn.style.cursor = 'pointer';
+            removeDtBtn.style.color = '#ef4444';
+            removeDtBtn.addEventListener('click', async () => {
+                mode.dataTypes.splice(dtIndex, 1);
+                await saveModesToServer();
+                renderModesUI();
+            });
+            
+            dtItem.appendChild(removeDtBtn);
+            dataList.appendChild(dtItem);
+        });
 
-              const removeDtBtn = document.createElement('span');
-              removeDtBtn.textContent = '×';
-              removeDtBtn.style.cursor = 'pointer';
-              removeDtBtn.style.color = '#ef4444';
-              removeDtBtn.addEventListener('click', async () => {
-                  mode.dataTypes.splice(dtIndex, 1);
-                  await saveModesToServer();
-                  renderModesUI();
-              });
-              
-              dtItem.appendChild(removeDtBtn);
-              dataList.appendChild(dtItem);
-          });
-
-          dataSection.appendChild(dataList);
-          card.appendChild(dataSection);
-          settingsModeList.appendChild(card);
-      });
-  } 
+        dataSection.appendChild(dataList);
+        card.appendChild(dataSection);
+        settingsModeList.appendChild(card);
+    });
+} 
 
 function askInput(title) {
-  return new Promise((resolve) => {
-      const modal = document.getElementById('inputModal');
-      const titleEl = document.getElementById('inputModalTitle');
-      const inputEl = document.getElementById('inputModalField');
-      const confirmBtn = document.getElementById('inputModalConfirm');
-      const cancelBtn = document.getElementById('inputModalCancel');
+    return new Promise((resolve) => {
+        const modal = document.getElementById('inputModal');
+        const titleEl = document.getElementById('inputModalTitle');
+        const inputEl = document.getElementById('inputModalField');
+        const confirmBtn = document.getElementById('inputModalConfirm');
+        const cancelBtn = document.getElementById('inputModalCancel');
 
-      titleEl.textContent = title;
-      inputEl.value = '';
-      modal.showModal();
+        titleEl.textContent = title;
+        inputEl.value = '';
+        modal.showModal();
 
-      const onConfirm = () => { cleanup(); resolve(inputEl.value.trim()); };
-      const onCancel = () => { cleanup(); resolve(null); };
+        const onConfirm = () => { cleanup(); resolve(inputEl.value.trim()); };
+        const onCancel = () => { cleanup(); resolve(null); };
 
-      const cleanup = () => {
-          confirmBtn.removeEventListener('click', onConfirm);
-          cancelBtn.removeEventListener('click', onCancel);
-          modal.close();
-      };
+        const cleanup = () => {
+            confirmBtn.removeEventListener('click', onConfirm);
+            cancelBtn.removeEventListener('click', onCancel);
+            modal.close();
+        };
 
-      confirmBtn.addEventListener('click', onConfirm);
-      cancelBtn.addEventListener('click', onCancel);
-  });
+        confirmBtn.addEventListener('click', onConfirm);
+        cancelBtn.addEventListener('click', onCancel);
+    });
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -289,17 +289,30 @@ document.addEventListener('DOMContentLoaded', async () => {
     const settingsMenu = document.getElementById('settingsMenu');
     const closeSettingsBtn = document.getElementById('closeSettingsBtn');
     const saveModeButton = document.getElementById('saveModeButton');
-    const modesTab = document.getElementById('modes-tab');
-    const settingsModeList = document.getElementById('settingsModeList');
 
-    settingsButton.addEventListener('click', () => {
-        settingsMenu.classList.add('open');
-    });
+    if (settingsButton) {
+        
+        settingsButton.innerHTML = `
+            <svg width="22" height="22" style="pointer-events: none;color: #ffffff;fill: none">
+                <use href="#config-svg"></use>
+            </svg>
+        `;
+        settingsButton.addEventListener('click', () => {
+            settingsMenu.classList.add('open');
+        });
+    }
+
+    if (saveModeButton) {
+        saveModeButton.innerHTML = `
+            <svg width="18" height="18" style="pointer-events: none; margin-right: 6px;color: #ffffff;">
+                <use href="#save-svg"></use>
+            </svg>
+        `;
+    }
 
     closeSettingsBtn.addEventListener('click', () => {
         settingsMenu.classList.remove('open');
     });
-
 
     document.querySelectorAll('.settings-tab').forEach((tab) => {
         tab.addEventListener('click', () => {
@@ -309,51 +322,76 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // ABA DE BOTÕES
     const createNewTestButton = document.getElementById('testButton');
-    createNewTestButton.addEventListener('click', () => {
-        const widget = new BaseWidget('testWidget', 'workspace');
-        widget_list.push(widget);
-        widget.render();
-    });
+    if (createNewTestButton) {
+        createNewTestButton.addEventListener('click', () => {
+            const widget = new BaseWidget('testWidget', 'workspace');
+            widget_list.push(widget);
+            widget.render();
+        });
+    }
 
     const createRawDataButton = document.getElementById('rawDataButton');
-    createRawDataButton.addEventListener('click', () => {
-        const widget = new terminalWidget('Terminal', 'workspace', current_data);
-        widget_list.push(widget);
-        widget.render();
-    });
+    if (createRawDataButton) {
+        createRawDataButton.addEventListener('click', () => {
+            const widget = new terminalWidget('Terminal', 'workspace', current_data);
+            widget_list.push(widget);
+            widget.render();
+        });
+    }
 
     const createChartButton = document.getElementById('chartButton');
-    createChartButton.addEventListener('click', () => {
-        const widget = new chartWidget('Gráfico', 'workspace', current_data);
-        widget_list.push(widget);
-        widget.render();
-    });
+    if (createChartButton) {
+        createChartButton.addEventListener('click', () => {
+            const widget = new chartWidget('Gráfico', 'workspace', current_data);
+            widget_list.push(widget);
+            widget.render();
+        });
+    }
 
-    saveModeButton.addEventListener('click', async () => {
-        const name = await askInput('Nome do modo:');
-        if (!name) {
-            alert('Informe um nome para o modo.');
-            return;
-        }
-
-        const existingMode = savedModes.find((mode) => mode.name === name);
-        if (existingMode) {
-            if (!confirm(`O modo "${name}" já existe. Atualizar com a disposição atual?`)) {
+    if (saveModeButton) {
+        saveModeButton.addEventListener('click', async () => {
+            const name = await askInput('Nome do modo:');
+            if (!name) {
+                alert('Informe um nome para o modo.');
                 return;
             }
-            existingMode.widgets = getCurrentModeSpec(name).widgets;
-        } else {
-            savedModes.push(getCurrentModeSpec(name));
-        }
 
-        await saveModesToServer();
-    });
-    
-    saveModeButton.addEventListener('click', async () => {
-        await saveModesToServer();
-        renderModesUI(); 
-    });
+            const existingMode = savedModes.find((mode) => mode.name === name);
+            if (existingMode) {
+                if (!confirm(`O modo "${name}" já existe. Atualizar com a disposição atual?`)) {
+                    return;
+                }
+                existingMode.widgets = structuredClone(getCurrentModeSpec(name).widgets);            } 
+            else {
+                savedModes.push(getCurrentModeSpec(name));
+            }
 
+            await saveModesToServer();
+            renderModesUI(); 
+        });
+    }
+
+    const addWidgetBtn = document.getElementById('addWidgetBtn');
+    const widgetDropdown = document.getElementById('widgetDropdown');
+
+    if (addWidgetBtn && widgetDropdown) {
+        addWidgetBtn.addEventListener('click', (e) => {
+            e.stopPropagation(); 
+            widgetDropdown.classList.toggle('show');
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!widgetDropdown.contains(e.target) && !addWidgetBtn.contains(e.target)) {
+                widgetDropdown.classList.remove('show');
+            }
+        });
+
+        widgetDropdown.querySelectorAll('button').forEach(btn => {
+            btn.addEventListener('click', () => {
+                widgetDropdown.classList.remove('show');
+            });
+        });
+    }
     await fetchModesFromServer();
     renderModesUI();
 });
