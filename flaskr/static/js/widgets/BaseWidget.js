@@ -5,6 +5,8 @@ export default class BaseWidget {
 
         this.element = document.createElement('div');
         this.element.className = 'widget';
+        this.element.style.left = '20px';
+        this.element.style.top = '20px';
 
         this.header = document.createElement('div');
         this.header.className = 'widget-header';
@@ -122,6 +124,38 @@ export default class BaseWidget {
         } )
 
 
+    }
+    //Retorna o tipo do widget, usado para salvar a disposição dos widgets
+    getKind() {
+        return 'widget';
+    }
+
+    //Converte para json para salvar a disposição do widget. Em novos widgest é importante colocar informações adicionais que devem ser guardadas
+    serialize() {
+        return {
+            type: this.getKind(),
+            title: this.title,
+            left: this.element.style.left || '20px',
+            top: this.element.style.top || '20px',
+            width: this.element.offsetWidth,
+            height: this.element.offsetHeight
+        };
+    }
+
+    //Restaura a disposição do widget a partir de um json.
+    restoreLayout(spec) {
+        if (!spec) return;
+        if (spec.left) this.element.style.left = spec.left;
+        if (spec.top) this.element.style.top = spec.top;
+        if (spec.width) this.element.style.width = `${spec.width}px`;
+        if (spec.height) this.element.style.height = `${spec.height}px`;
+    }
+
+    //Limpa o widget da tela
+    cleanup() {
+        if (this.element.parentElement) {
+            this.element.remove();
+        }
     }
 
     render() {

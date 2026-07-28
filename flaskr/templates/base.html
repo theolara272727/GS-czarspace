@@ -14,7 +14,21 @@
         <div class="button" id="testButton">Test Widget</div>
         <div class="button" id="rawDataButton">Terminal</div>
         <div class="button" id="chartButton">Gráfico</div>
+        <div class="button" id="saveModeButton">💾</div>
 
+        <div class="button" id="settingsButton">⚙️</div>
+    </div>
+    <div id="modes-tab"></div>
+
+    <div id="settingsMenu" class="settings-sidebar">
+        <div class="sidebar-header">
+            <h2>Configurações</h2>
+            <button id="closeSettingsBtn" class="close-btn">&times;</button>
+        </div>
+        <div class="sidebar-content">
+           <h3 style="margin-bottom: 10px; font-size: 1rem; color: #9ca3af;">Gerenciar Modos</h3>
+            <ul id="settingsModeList" class="mode-list"></ul>
+        </div>
     </div>
     <main>
         
@@ -26,6 +40,17 @@
     <script src="{{ url_for('static', filename='js/socket.io.min.js') }}"></script>
     
     <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>
+
+    <dialog id="inputModal" style="padding: 0; border: none; border-radius: 8px; background: #1f2937; color: white; width: 300px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);">
+    <div style="padding: 20px; display: flex; flex-direction: column; gap: 15px;">
+        <h3 id="inputModalTitle" style="margin: 0; font-size: 1.1rem; color: #ffffff;">Digite o valor:</h3>
+        <input type="text" id="inputModalField" style="padding: 8px; background: #111827; border: 1px solid #374151; color: white; border-radius: 4px;">
+        <div style="display: flex; justify-content: flex-end; gap: 10px;">
+            <button id="inputModalCancel" style="padding: 6px 12px; background: transparent; border: 1px solid #9ca3af; color: #9ca3af; border-radius: 4px; cursor: pointer;">Cancelar</button>
+            <button id="inputModalConfirm" style="padding: 6px 12px; background: #d03379; border: none; color: white; border-radius: 4px; cursor: pointer;">OK</button>
+        </div>
+    </div>
+    </dialog>
 
 </body>
 </html>

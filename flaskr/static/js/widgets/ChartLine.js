@@ -32,6 +32,42 @@ export default class chartWidget extends BaseWidget {
         });
     }
 
+    getKind() {
+        return 'chart';
+    }
+
+    serialize() {
+        return {
+            ...super.serialize(),
+            type: this.getKind(),
+            selectedKey: this.selectedKey,
+            lineColor: this.lineColor,
+            paused: this.paused
+        };
+    }
+
+    applyState(state = {}) {
+        if (state.lineColor) {
+            this.lineColor = state.lineColor;
+            if (this.colorInput) {
+                this.colorInput.value = state.lineColor;
+            }
+        }
+        if (typeof state.paused === 'boolean') {
+            this.paused = state.paused;
+            if (this.pauseBtn) {
+                this.pauseBtn.innerText = this.paused ? 'Retomar' : 'Pausar';
+                this.pauseBtn.style.backgroundColor = this.paused ? '#374151' : '#1f2937';
+            }
+        }
+        if (state.selectedKey) {
+            this.selectedKey = state.selectedKey;
+            if (this.select) {
+                this.select.value = state.selectedKey;
+            }
+        }
+    }
+
     // Monta a barra de configuração (seletor + leitura) e a área do gráfico
     buildUI() {
         this.configBar = document.createElement('div');
@@ -267,26 +303,55 @@ export default class chartWidget extends BaseWidget {
     // Adiciona ao <select> qualquer chave numérica nova que apareça nos dados
     refreshKeys() {
         if (this.data == undefined) return;
-        for (const [key, value] of Object.entries(this.data)) {
-            if (!Number.isFinite(parseFloat(value))) continue; // ignora chaves não-numéricas
-            if (this.knownKeys.has(key)) continue;
 
-            this.knownKeys.add(key);
-            const opt = document.createElement('option');
-            opt.value = key;
-            opt.innerText = key;
+        // 1. Identifica as chaves válidas esperadas para o modo atual.
+        // Tenta buscar da variável global 'currentMode' configurada no main.js
+        let validKeys = [];
+        if (typeof window !== 'undefined' && window.currentMode && window.currentMode.dataTypes) {
+            validKeys = window.currentMode.dataTypes;
+        } else {
+            validKeys = Object.keys(this.data);
+        }
 
-            // remove o placeholder na primeira chave válida
-            if (this.select.options.length === 1 && this.select.options[0].value === '') {
-                this.select.remove(0);
+        validKeys = validKeys.filter(key => this.data[key] !== undefined && Number.isFinite(parseFloat(this.data[key])));
+
+        for (const knownKey of Array.from(this.knownKeys)) {
+            if (!validKeys.includes(knownKey)) {
+                this.knownKeys.delete(knownKey);
+                
+                Array.from(this.select.options).forEach((opt, index) => {
+                    if (opt.value === knownKey) this.select.remove(index);
+                });
+                
+                delete this.buffers[knownKey];
             }
-            this.select.appendChild(opt);
+        }
 
-            // seleciona a primeira chave automaticamente
-            if (this.selectedKey === null) {
-                this.selectedKey = key;
-                this.select.value = key;
+        validKeys.forEach(key => {
+            if (!this.knownKeys.has(key)) {
+                this.knownKeys.add(key);
+                
+                const opt = document.createElement('option');
+                opt.value = key;
+                opt.innerText = key;
+
+                if (this.select.options.length > 0 && this.select.options[0].value === '') {
+                    this.select.remove(0);
+                }
+                
+                this.select.appendChild(opt);
             }
+        });
+
+      
+        if (this.selectedKey && !validKeys.includes(this.selectedKey)) {
+            this.selectedKey = validKeys.length > 0 ? validKeys[0] : null;
+            this.select.value = this.selectedKey || '';
+            this.draw(); 
+        } 
+        else if (this.selectedKey === null && validKeys.length > 0) {
+            this.selectedKey = validKeys[0];
+            this.select.value = validKeys[0];
         }
     }
 

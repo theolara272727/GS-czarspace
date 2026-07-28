@@ -11,6 +11,17 @@ export default class rawDataWidget extends BaseWidget{
         this.element.style.width = '300px'; 
         this.element.style.height = '200px';
     }
+
+    getKind() {
+        return 'terminal';
+    }
+
+    serialize() {
+        return {
+            ...super.serialize(),
+            type: this.getKind()
+        };
+    }
     update(deltaTime){
         if(this.data != undefined){
             const time = new Date()
