@@ -11,6 +11,18 @@
         <h1>Czar Ground Station</h1>
         
         <div class="header-actions">
+            <button class="action-btn source-mode-btn active-source" id="btn-live" type="button" title="Telemetria ao vivo" aria-label="Telemetria ao vivo">
+                <svg width="22" height="22" aria-hidden="true">
+                    <use href="#icon-live"></use>
+                </svg>
+                <span>Live</span>
+            </button>
+            <button class="action-btn source-mode-btn" id="btn-history" type="button" title="Reproduzir histórico" aria-label="Reproduzir histórico">
+                <svg width="22" height="22" aria-hidden="true">
+                    <use href="#icon-history"></use>
+                </svg>
+                <span>Hist</span>
+            </button>
             <div class="dropdown-container">
                 <button id="addWidgetBtn" class="action-btn">
                     <svg width="22" height="22" style="pointer-events: none; margin-right: 8px;">
@@ -24,12 +36,37 @@
                     <div class="button" id="chartButton">Gráfico</div>
                 </div>
             </div>
-
             <div class="action-btn" id="saveModeButton">💾</div>
             <div class="action-btn" id="settingsButton">⚙️</div>
         </div>
     </header>
-
+    <div id="history-controls" style="display: none; background: #1f2937; padding: 10px 20px; border-bottom: 1px solid #374151; gap: 15px; align-items: center; color: #e0e6ed; font-size: 0.9rem;">
+    <span style="font-weight: bold; color: #d03379;">Filtro Histórico:</span>
+    <label style="display: flex; gap: 8px; align-items: center;">
+        Início: 
+        <input type="datetime-local" id="hist-start" style="background: #111827; color: white; border: 1px solid #374151; padding: 6px; border-radius: 4px; font-family: inherit;">
+    </label>
+    <label style="display: flex; gap: 8px; align-items: center;">
+        Fim: 
+        <input type="datetime-local" id="hist-end" style="background: #111827; color: white; border: 1px solid #374151; padding: 6px; border-radius: 4px; font-family: inherit;">
+    </label>
+    <button id="fetch-history-btn" class="action-btn" style="background: #d03379; border: none; color: white; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-left: auto;">
+        Reproduzir
+    </button>
+    <label style="display: flex; gap: 8px; align-items: center;">
+        Velocidade:
+        <select id="history-speed" style="background: #111827; color: white; border: 1px solid #374151; padding: 6px; border-radius: 4px; font-family: inherit;">
+            <option value="1">1x</option>
+            <option value="2">2x</option>
+            <option value="5">5x</option>
+            <option value="10">10x</option>
+        </select>
+    </label>
+    <button id="stop-history-btn" class="action-btn" style="display: none; background: #374151; border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer;">
+        Parar
+    </button>
+    <span id="history-status" aria-live="polite"></span>
+    </div>
     <div id="modes-tab"></div>
 
     <div id="settingsMenu" class="settings-sidebar">
@@ -81,6 +118,14 @@
             <path d="M17 14V17M17 20V17M17 17H14M17 17H20" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
             <circle cx="6" cy="7" r="1" fill="currentColor"></circle>
             <circle cx="9" cy="7" r="1" fill="currentColor"></circle>
+        </symbol>
+        <symbol id="icon-live" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="2" fill="currentColor"></circle>
+            <path d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.5 5.5a9.2 9.2 0 0 0 0 13M18.5 5.5a9.2 9.2 0 0 1 0 13" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+        </symbol>
+        <symbol id="icon-history" viewBox="0 0 24 24" fill="none">
+            <path d="M4 12a8 8 0 1 0 2.34-5.66L4 8.68M4 4v4.68h4.68" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+            <path d="M12 8v4l2.75 1.75" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
         </symbol>
     </svg>
 </body>

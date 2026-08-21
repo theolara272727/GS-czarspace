@@ -22,21 +22,23 @@ export default class rawDataWidget extends BaseWidget{
             type: this.getKind()
         };
     }
-    update(deltaTime){
-        if(this.data != undefined){
-            const time = new Date()
-            const timeString = [
-                time.getHours(),
-                time.getMinutes(),
-                time.getSeconds()
-                ].map(unit => String(unit).padStart(2, '0')).join(':');
+    update(new_data){
+        const payload = new_data || this.data;
+        if(payload != undefined){
+            this.data = payload;
+            const timestamp = payload.timestamp ? new Date(payload.timestamp) : new Date();
+            const timeString = Number.isNaN(timestamp.getTime())
+                ? String(payload.timestamp)
+                : timestamp.toLocaleTimeString();
             let newLine = document.createElement('span');
             newLine.className = 'widgetLine'
             newLine.style.whiteSpace = 'nowrap';
             newLine.style.fontFamily = 'monospace'; 
             newLine.style.padding = '2px 4px';
             let line = "[" + timeString + "]"
-            for (const [key, value] of Object.entries(this.data)){
+            const dataSource = payload.values !== undefined ? payload.values : payload;
+            for (const [key, value] of Object.entries(dataSource)){
+                if (key === 'timestamp' || key === 'values') continue;
                 let formatted = typeof value === 'number' ? value.toFixed(2) : value;
                 line += ` ${key}: ${formatted} |`;
             }
@@ -55,5 +57,11 @@ export default class rawDataWidget extends BaseWidget{
             }
             this.lineCounter++
         }
+    }
+
+    clearData() {
+        this.data = undefined;
+        this.lineCounter = 0;
+        this.content.replaceChildren();
     }
 }
