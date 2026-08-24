@@ -1,6 +1,7 @@
 import BaseWidget from './widgets/BaseWidget.js';
 import terminalWidget from './widgets/terminalWidget.js';
 import chartWidget from './widgets/ChartWidget.js';
+import MapWidget from './widgets/MapWidget.js';
 
 const socket = io();
 let current_data = {};
@@ -470,6 +471,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (createChartButton) {
         createChartButton.addEventListener('click', () => {
             const widget = registerWidget(new chartWidget('Gráfico', 'workspace', current_data));
+            widget.render();
+        });
+    }
+
+    const createMaptButton = document.getElementById('mapButton');
+    if (createMaptButton) {
+        createMaptButton.addEventListener('click', () => {
+            const widget = registerWidget(new MapWidget('Gráfico', 'workspace', current_data));
             widget.render();
         });
     }
