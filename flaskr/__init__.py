@@ -61,9 +61,16 @@ def _save_modes(app, modes):
 
 #PORTA = 'COM3' #Porta de entrada de dados
 BAUD = 9600 
+PORTA = 'COM3'
+porta_serial = None
+thread = None
+try:
+    porta_serial = serial.Serial(PORTA, BAUD) #Configura a porta serial
+    porta_serial.timeout = 2
+except serial.SerialException as exc:
+    porta_serial = None
+    print(f"Aviso: não foi possível abrir a porta serial {PORTA}: {exc}")
 
-#porta_serial = serial.Serial(PORTA, BAUD) #Configura a porta serial
-#   porta_serial.timeout = 2
 socketio = SocketIO()
 
 DB_PATH = ""
