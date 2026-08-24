@@ -1,36 +1,153 @@
 import BaseWidget from './widgets/BaseWidget.js';
 import terminalWidget from './widgets/terminalWidget.js';
-import chartWidget from './widgets/ChartLine.js';
+import chartWidget from './widgets/ChartWidget.js';
 
-// WebSocket e Estado da Aplicação
 const socket = io();
 let current_data = {};
 const widget_list = [];
 let savedModes = [];
 let currentMode = null;
+let viewMode = "live";
+let historicalRequestId = 0;
+let historicalTimer = null;
+let historicalPlaybackToken = 0;
 
 socket.on('new_data', (data) => {
-    let new_data = {};
+    let mapped_telemetry = {};
 
-    if (currentMode != null && currentMode.dataTypes) {
+    if (currentMode != null && currentMode.dataTypes && currentMode.dataTypes.length > 0) {
+        
         currentMode.dataTypes.forEach((key, index) => {
-            if (data[index] !== undefined) {
-                new_data[key] = data[index];
+            if (data.values && data.values[index] !== undefined) {
+                mapped_telemetry[key] = data.values[index];
             }
         });
-        Object.assign(current_data, new_data);
-        socket.emit('save_telemetry', new_data);
+        
+        Object.assign(current_data, mapped_telemetry);
+        current_data.timestamp = data.timestamp;
+        
+        socket.emit('save_telemetry', {
+            timestamp: data.timestamp,
+            telemetry: mapped_telemetry
+        });
+        
     } else {
         Object.assign(current_data, data);
     }
-    updateWidgets();
+    
+    if (viewMode === "live") {
+        updateWidgets(current_data);
+    }
 });
 
-// Lógica de updates dos widgets
-function updateWidgets() {
-    for (let widget of widget_list) {
-        widget.update();
+socket.on('historical_data', (historicalData) => {
+    if (viewMode !== 'historical') return;
+
+    const response = typeof historicalData === 'string'
+        ? JSON.parse(historicalData)
+        : historicalData;
+
+    if (response.requestId !== historicalRequestId) return;
+    setHistoryLoading(false);
+
+    if (!Array.isArray(response.samples) || response.samples.length === 0) {
+        setHistoryStatus('Nenhum dado encontrado no intervalo selecionado.');
+        return;
     }
+
+    const speed = Number(document.getElementById('history-speed')?.value) || 1;
+    playHistoricalSamples(response.samples, speed);
+});
+
+socket.on('historical_error', (error) => {
+    if (viewMode !== 'historical') return;
+    if (error?.requestId !== historicalRequestId) return;
+    setHistoryLoading(false);
+    setHistoryStatus(error?.message || 'Não foi possível recuperar o histórico.');
+});
+
+function updateWidgets(data_source) {
+    for (let widget of widget_list) {
+        widget.update(data_source);
+    }
+}
+
+function clearWidgetData() {
+    for (const widget of widget_list) {
+        if (typeof widget.clearData === 'function') {
+            widget.clearData();
+        }
+    }
+}
+
+function setHistoryStatus(message) {
+    const status = document.getElementById('history-status');
+    if (status) status.textContent = message;
+}
+
+function setHistoryLoading(isLoading) {
+    const button = document.getElementById('fetch-history-btn');
+    if (!button) return;
+    button.disabled = isLoading;
+    button.textContent = isLoading ? 'Buscando...' : 'Reproduzir';
+}
+
+function stopHistoricalPlayback(message = '') {
+    historicalPlaybackToken += 1;
+    if (historicalTimer !== null) {
+        clearTimeout(historicalTimer);
+        historicalTimer = null;
+    }
+
+    const stopButton = document.getElementById('stop-history-btn');
+    if (stopButton) stopButton.style.display = 'none';
+    if (message) setHistoryStatus(message);
+}
+
+function playHistoricalSamples(samples, speed) {
+    stopHistoricalPlayback();
+    clearWidgetData();
+
+    const token = historicalPlaybackToken;
+    const stopButton = document.getElementById('stop-history-btn');
+    if (stopButton) stopButton.style.display = '';
+
+    const playSample = (index) => {
+        if (token !== historicalPlaybackToken || viewMode !== 'historical') return;
+
+        updateWidgets(samples[index]);
+        setHistoryStatus(`Reproduzindo ${index + 1} de ${samples.length} (${speed}x)`);
+
+        if (index >= samples.length - 1) {
+            historicalTimer = null;
+            if (stopButton) stopButton.style.display = 'none';
+            setHistoryStatus(`Reprodução concluída: ${samples.length} amostras.`);
+            return;
+        }
+
+        const currentTime = Date.parse(samples[index].timestamp);
+        const nextTime = Date.parse(samples[index + 1].timestamp);
+        const elapsed = Number.isFinite(currentTime) && Number.isFinite(nextTime)
+            ? Math.max(0, nextTime - currentTime)
+            : 0;
+
+        historicalTimer = setTimeout(() => playSample(index + 1), elapsed / speed);
+    };
+
+    playSample(0);
+}
+
+function registerWidget(widget) {
+    widget_list.push(widget);
+
+    widget.closeWidget.addEventListener('click', () => {
+        const index = widget_list.indexOf(widget);
+        if (index !== -1) {
+            widget_list.splice(index, 1);
+        }
+    });
+
+    return widget;
 }
 
 function clearWorkspace() {
@@ -66,6 +183,14 @@ function createWidgetFromSpec(spec) {
     return widget;
 }
 
+function isValidWidgetSpec(spec) {
+    if (!spec || typeof spec !== 'object') return false;
+
+    const hasInvalidWidth = spec.width != null && Number(spec.width) <= 0;
+    const hasInvalidHeight = spec.height != null && Number(spec.height) <= 0;
+    return !hasInvalidWidth && !hasInvalidHeight;
+}
+
 async function fetchModesFromServer() {
     try {
         const response = await fetch('/modes');
@@ -99,18 +224,25 @@ function loadMode(mode) {
     window.currentMode = mode;
     if (!Array.isArray(mode.widgets)) return;
 
-    mode.widgets.forEach((widgetSpec) => {
-        const widget = createWidgetFromSpec(widgetSpec);
-        widget_list.push(widget);
+    mode.widgets.filter(isValidWidgetSpec).forEach((widgetSpec) => {
+        const widget = registerWidget(createWidgetFromSpec(widgetSpec));
         widget.render();
     });
-    updateWidgets();
+
+    if (viewMode === 'live') {
+        updateWidgets(current_data);
+    } else {
+        stopHistoricalPlayback('Modo alterado. Selecione um intervalo para reproduzir.');
+    }
 }
 
 function getCurrentModeSpec(name) {
+    const existingMode = savedModes.find(m => m.name === name);
+    
     return {
         name,
-        widgets: widget_list.map((widget) => {
+        dataTypes: existingMode && existingMode.dataTypes ? existingMode.dataTypes : [],
+        widgets: widget_list.filter((widget) => widget.element?.isConnected).map((widget) => {
             if (typeof widget.serialize === 'function') {
                 return widget.serialize();
             }
@@ -147,7 +279,6 @@ function renderModesUI() {
         const card = document.createElement('div');
         card.className = 'mode-card';
 
-        // Cabeçalho do Card
         const cardHeader = document.createElement('div');
         cardHeader.className = 'mode-header';
         
@@ -291,7 +422,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const saveModeButton = document.getElementById('saveModeButton');
 
     if (settingsButton) {
-        
         settingsButton.innerHTML = `
             <svg width="22" height="22" style="pointer-events: none;color: #ffffff;fill: none">
                 <use href="#config-svg"></use>
@@ -320,12 +450,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     });
 
-    // ABA DE BOTÕES
     const createNewTestButton = document.getElementById('testButton');
     if (createNewTestButton) {
         createNewTestButton.addEventListener('click', () => {
-            const widget = new BaseWidget('testWidget', 'workspace');
-            widget_list.push(widget);
+            const widget = registerWidget(new BaseWidget('testWidget', 'workspace'));
             widget.render();
         });
     }
@@ -333,8 +461,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const createRawDataButton = document.getElementById('rawDataButton');
     if (createRawDataButton) {
         createRawDataButton.addEventListener('click', () => {
-            const widget = new terminalWidget('Terminal', 'workspace', current_data);
-            widget_list.push(widget);
+            const widget = registerWidget(new terminalWidget('Terminal', 'workspace', current_data));
             widget.render();
         });
     }
@@ -342,12 +469,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     const createChartButton = document.getElementById('chartButton');
     if (createChartButton) {
         createChartButton.addEventListener('click', () => {
-            const widget = new chartWidget('Gráfico', 'workspace', current_data);
-            widget_list.push(widget);
+            const widget = registerWidget(new chartWidget('Gráfico', 'workspace', current_data));
             widget.render();
         });
     }
-
     if (saveModeButton) {
         saveModeButton.addEventListener('click', async () => {
             const name = await askInput('Nome do modo:');
@@ -392,6 +517,79 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
         });
     }
+
+const historyControls = document.getElementById('history-controls');
+    const histStart = document.getElementById('hist-start');
+    const histEnd = document.getElementById('hist-end');
+    const fetchHistoryBtn = document.getElementById('fetch-history-btn');
+    const stopHistoryBtn = document.getElementById('stop-history-btn');
+
+    document.getElementById('btn-live').addEventListener('click', () => {
+        viewMode = 'live';
+        historicalRequestId += 1;
+        stopHistoricalPlayback();
+        setHistoryLoading(false);
+        setHistoryStatus('');
+        if (historyControls) historyControls.style.display = 'none'; 
+        
+        document.getElementById('btn-live').classList.add('active-source');
+        document.getElementById('btn-history').classList.remove('active-source');
+        updateWidgets(current_data);
+    });
+
+    document.getElementById('btn-history').addEventListener('click', () => {
+        viewMode = 'historical';
+        stopHistoricalPlayback();
+        if (historyControls) historyControls.style.display = 'flex'; 
+        
+        document.getElementById('btn-history').classList.add('active-source');
+        document.getElementById('btn-live').classList.remove('active-source');
+
+        if (histEnd && !histEnd.value) {
+            const now = new Date();
+            now.setMinutes(now.getMinutes() - now.getTimezoneOffset()); 
+            histEnd.value = now.toISOString().slice(0, 16); 
+            
+            const past = new Date(now.getTime() - 60 * 60 * 1000); 
+            histStart.value = past.toISOString().slice(0, 16);
+        }
+    });
+
+    if (fetchHistoryBtn) {
+        fetchHistoryBtn.addEventListener('click', () => {
+            if (!histStart.value || !histEnd.value) {
+                alert('Por favor, selecione as datas de início e fim.');
+                return;
+            }
+
+            const startUTC = new Date(histStart.value).toISOString();
+            const endUTC = new Date(histEnd.value).toISOString();
+
+            if (startUTC >= endUTC) {
+                setHistoryStatus('A data inicial deve ser anterior à data final.');
+                return;
+            }
+
+            stopHistoricalPlayback();
+            clearWidgetData();
+            historicalRequestId += 1;
+            setHistoryLoading(true);
+            setHistoryStatus('Buscando dados...');
+
+            socket.emit('time_series', { 
+                start: startUTC, 
+                end: endUTC,
+                requestId: historicalRequestId
+            });
+        });
+    }
+
+    if (stopHistoryBtn) {
+        stopHistoryBtn.addEventListener('click', () => {
+            stopHistoricalPlayback('Reprodução interrompida.');
+        });
+    }
+
     await fetchModesFromServer();
     renderModesUI();
 });

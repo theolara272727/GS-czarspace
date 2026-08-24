@@ -2,7 +2,7 @@ export default class BaseWidget {
     constructor(title, idContainerDestino) {
         this.title = title;
         this.containerDestino = document.getElementById(idContainerDestino);
-
+        this.data;
         this.element = document.createElement('div');
         this.element.className = 'widget';
         this.element.style.left = '20px';
@@ -145,10 +145,10 @@ export default class BaseWidget {
     //Restaura a disposição do widget a partir de um json.
     restoreLayout(spec) {
         if (!spec) return;
-        if (spec.left) this.element.style.left = spec.left;
-        if (spec.top) this.element.style.top = spec.top;
-        if (spec.width) this.element.style.width = `${spec.width}px`;
-        if (spec.height) this.element.style.height = `${spec.height}px`;
+        if (spec.left != null) this.element.style.left = spec.left;
+        if (spec.top != null) this.element.style.top = spec.top;
+        if (spec.width != null) this.element.style.width = `${spec.width}px`;
+        if (spec.height != null) this.element.style.height = `${spec.height}px`;
     }
 
     //Limpa o widget da tela
@@ -165,7 +165,11 @@ export default class BaseWidget {
             console.error("Contêiner de destino não encontrado");
         }
     }
-    update(deltaTime){
+    update(new_data){
+        this.data = new_data;
+    }
 
+    clearData() {
+        this.data = undefined;
     }
 }

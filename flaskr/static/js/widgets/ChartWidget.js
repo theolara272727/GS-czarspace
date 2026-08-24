@@ -1,22 +1,19 @@
 import BaseWidget from "./BaseWidget.js";
 
 const Chart = window.Chart;
-// Lembre-se de garantir que o Chart.js está importado no seu projeto.
-// Exemplo: import Chart from 'chart.js/auto'; (se estiver usando bundler)
 
 export default class chartWidget extends BaseWidget {
     constructor(title, idContainerDestino, data) {
         super(title, idContainerDestino);
 
-        this.data = data;                // referência a current_data (atualizada in-place pelo main.js)
-        this.maxPoints = 40;        // quantos pontos ficam visíveis no buffer
-        this.buffers = {};           // { chave: [valor, valor, ...] } -- histórico por dado
-        this.selectedKey = null;     // chave atualmente plotada
-        this.knownKeys = new Set();  // chaves já adicionadas ao <select>
-        this.lineColor = '#d03379';  // cor da linha (alterável pelo usuário)
-        this.paused = false;         // quando true, ignora dados novos
+        this.data = data;
+        this.maxPoints = 50; 
+        this.buffers = {};
+        this.selectedKey = null;
+        this.knownKeys = new Set();
+        this.lineColor = '#d03379';
+        this.paused = false;
 
-        // o conteúdo precisa preencher o espaço abaixo do header
         this.content.style.flex = '1';
         this.content.style.minHeight = '0';
         this.content.style.padding = '6px';
@@ -25,15 +22,29 @@ export default class chartWidget extends BaseWidget {
         this.buildUI();
         this.setupCanvas();
 
-        // limpeza: ao fechar o widget, desconecta o observer e destrói o gráfico
         this.closeWidget.addEventListener('click', () => {
-            if (this.resizeObserver) this.resizeObserver.disconnect();
-            if (this.chart) this.chart.destroy();
+            this.destroyChart();
         });
     }
 
     getKind() {
         return 'chart';
+    }
+
+    destroyChart() {
+        if (this.resizeObserver) {
+            this.resizeObserver.disconnect();
+            this.resizeObserver = null;
+        }
+        if (this.chart) {
+            this.chart.destroy();
+            this.chart = null;
+        }
+    }
+
+    cleanup() {
+        this.destroyChart();
+        super.cleanup();
     }
 
     serialize() {
@@ -68,7 +79,6 @@ export default class chartWidget extends BaseWidget {
         }
     }
 
-    // Monta a barra de configuração (seletor + leitura) e a área do gráfico
     buildUI() {
         this.configBar = document.createElement('div');
         this.configBar.style.display = 'flex';
@@ -76,9 +86,8 @@ export default class chartWidget extends BaseWidget {
         this.configBar.style.justifyContent = 'space-between';
         this.configBar.style.gap = '8px';
         this.configBar.style.flexShrink = '0';
-        this.configBar.style.flexWrap = 'wrap'; // quebra linha se o widget estiver estreito
+        this.configBar.style.flexWrap = 'wrap'; 
 
-        // seletor de qual dado plotar
         this.select = document.createElement('select');
         this.select.style.backgroundColor = '#1f2937';
         this.select.style.color = '#e0e6ed';
@@ -99,23 +108,19 @@ export default class chartWidget extends BaseWidget {
         placeholder.innerText = 'aguardando dados...';
         this.select.appendChild(placeholder);
 
-        // botão pausar / retomar o recebimento de dados
         this.pauseBtn = this.makeButton('Pausar');
         this.pauseBtn.addEventListener('click', () => {
             this.paused = !this.paused;
             this.pauseBtn.innerText = this.paused ? 'Retomar' : 'Pausar';
-            // realça o botão enquanto está pausado
             this.pauseBtn.style.backgroundColor = this.paused ? '#374151' : '#1f2937';
         });
 
-        // botão reset: limpa o histórico de todos os dados
         this.resetBtn = this.makeButton('Reset');
         this.resetBtn.addEventListener('click', () => {
             this.buffers = {};
             this.draw();
         });
 
-        // seletor de cor da linha
         this.colorInput = document.createElement('input');
         this.colorInput.type = 'color';
         this.colorInput.value = this.lineColor;
@@ -133,15 +138,13 @@ export default class chartWidget extends BaseWidget {
             this.draw();
         });
 
-        // leitura do valor atual
         this.readout = document.createElement('span');
         this.readout.style.fontSize = '0.85rem';
         this.readout.style.color = this.lineColor;
         this.readout.style.fontWeight = 'bold';
-        this.readout.style.marginLeft = 'auto'; // empurra a leitura para a direita
+        this.readout.style.marginLeft = 'auto'; 
         this.readout.innerText = '--';
 
-        // grupo da esquerda: seletor + controles
         const controls = document.createElement('div');
         controls.style.display = 'flex';
         controls.style.alignItems = 'center';
@@ -155,7 +158,6 @@ export default class chartWidget extends BaseWidget {
         this.configBar.appendChild(controls);
         this.configBar.appendChild(this.readout);
 
-        // wrapper do canvas (ocupa o espaço restante)
         this.canvasWrapper = document.createElement('div');
         this.canvasWrapper.style.position = 'relative';
         this.canvasWrapper.style.flex = '1';
@@ -172,7 +174,6 @@ export default class chartWidget extends BaseWidget {
         this.content.appendChild(this.canvasWrapper);
     }
 
-    // Cria um botão de controle com o estilo do tema
     makeButton(label) {
         const btn = document.createElement('button');
         btn.innerText = label;
@@ -188,11 +189,9 @@ export default class chartWidget extends BaseWidget {
         return btn;
     }
 
-    // Instancia o Chart.js e observa redimensionamento
     setupCanvas() {
         this.ctx = this.canvas.getContext('2d');
 
-        // Plugin interno para desenhar a mensagem "sem dados"
         const noDataPlugin = {
             id: 'noDataText',
             afterDraw: (chart) => {
@@ -216,7 +215,7 @@ export default class chartWidget extends BaseWidget {
         this.chart = new Chart(this.ctx, {
             type: 'line',
             data: {
-                labels: [], // Eixo X automático
+                labels: [], 
                 datasets: [{
                     label: 'Dado',
                     data: [],
@@ -230,7 +229,7 @@ export default class chartWidget extends BaseWidget {
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                animation: false, // Desliga a animação para o gráfico fluir em tempo real (snappy)
+                animation: false, 
                 layout: {
                     padding: { top: 10, bottom: 10, left: 10, right: 10 }
                 },
@@ -245,7 +244,6 @@ export default class chartWidget extends BaseWidget {
                             display: true,       
                             color: '#9ca3af',
                             font: { family: 'monospace', size: 12 },
-
                             maxTicksLimit: 10    
                         }
                     },
@@ -265,25 +263,22 @@ export default class chartWidget extends BaseWidget {
                 plugins: {
                     legend: { display: false },
                     tooltip: {
-                        enabled: true,             // Ativa o balão de texto
-                        intersect: false,          // Mostra o balão mesmo se o mouse não estiver exatamente em cima do pontinho (melhora a usabilidade)
-                        mode: 'index',             // Foca no ponto mais próximo do eixo X
-                        backgroundColor: '#1f2937', // Fundo escuro combinando com o tema do widget
-                        titleColor: '#9ca3af',      // Cor do título (Eixo X / Timestamp)
-                        bodyColor: '#e0e6ed',       // Cor do texto do valor (Eixo Y)
-                        borderColor: '#374151',     // Borda sutil
+                        enabled: true,             
+                        intersect: false,          
+                        mode: 'index',             
+                        backgroundColor: '#1f2937', 
+                        titleColor: '#9ca3af',      
+                        bodyColor: '#e0e6ed',       
+                        borderColor: '#374151',     
                         borderWidth: 1,
                         font: {
-                            family: 'monospace'    // Mantém o padrão de fonte que você está usando
+                            family: 'monospace'    
                         },
                         callbacks: {
-                            // Customiza o título do balão (Eixo X)
                             title: function(context) {
                                 return 'Tempo: ' + context[0].label;
                             },
-                            // Customiza o texto principal do balão (Eixo Y)
                             label: function(context) {
-                                // context.parsed.y pega o valor numérico puro do ponto atual
                                 return 'Valor: ' + context.parsed.y.toFixed(2);
                             }
                         }
@@ -292,7 +287,6 @@ export default class chartWidget extends BaseWidget {
             },
             plugins: [noDataPlugin]
         });
-
   
         this.resizeObserver = new ResizeObserver(() => {
             if(this.chart) this.chart.resize();
@@ -300,20 +294,26 @@ export default class chartWidget extends BaseWidget {
         this.resizeObserver.observe(this.canvasWrapper);
     }
 
-    // Adiciona ao <select> qualquer chave numérica nova que apareça nos dados
-    refreshKeys() {
-        if (this.data == undefined) return;
+refreshKeys(payload) {
+        if (!payload) return;
 
-        // 1. Identifica as chaves válidas esperadas para o modo atual.
-        // Tenta buscar da variável global 'currentMode' configurada no main.js
         let validKeys = [];
-        if (typeof window !== 'undefined' && window.currentMode && window.currentMode.dataTypes) {
+        let dataSource;
+
+        if (typeof window !== 'undefined' && window.currentMode && window.currentMode.dataTypes && window.currentMode.dataTypes.length > 0) {
             validKeys = window.currentMode.dataTypes;
+            dataSource = payload;
         } else {
-            validKeys = Object.keys(this.data);
+            dataSource = payload.values !== undefined ? payload.values : payload; 
+            validKeys = Object.keys(dataSource);
         }
 
-        validKeys = validKeys.filter(key => this.data[key] !== undefined && Number.isFinite(parseFloat(this.data[key])));
+        validKeys = validKeys.filter(key => 
+            key !== 'timestamp' && 
+            key !== 'values' &&
+            dataSource[key] !== undefined && 
+            Number.isFinite(parseFloat(dataSource[key]))
+        );
 
         for (const knownKey of Array.from(this.knownKeys)) {
             if (!validKeys.includes(knownKey)) {
@@ -342,7 +342,6 @@ export default class chartWidget extends BaseWidget {
                 this.select.appendChild(opt);
             }
         });
-
       
         if (this.selectedKey && !validKeys.includes(this.selectedKey)) {
             this.selectedKey = validKeys.length > 0 ? validKeys[0] : null;
@@ -355,30 +354,44 @@ export default class chartWidget extends BaseWidget {
         }
     }
 
-    // Chamado pelo main.js a cada evento 'new_data'
-    update(deltaTime) {
-        if (this.data == undefined) return;
-        if (this.paused) return; // pausado: não recebe dados novos
-        this.refreshKeys();
+    update(new_data) {
+        const payload = new_data || this.data;
+        if (payload == undefined) return;
+        if (this.paused) return; 
 
-        const agora = new Date();
-        const timestampStr = `${agora.getHours().toString().padStart(2, '0')}:${agora.getMinutes().toString().padStart(2, '0')}:${agora.getSeconds().toString().padStart(2, '0')}.${Math.floor(agora.getMilliseconds() / 100)}`;
+        this.refreshKeys(payload);
 
+        const exactTimestamp = payload.timestamp || new Date().toLocaleTimeString(); 
+        
+        let dataSource;
+        if (typeof window !== 'undefined' && window.currentMode && window.currentMode.dataTypes && window.currentMode.dataTypes.length > 0) {
+            dataSource = payload;
+        } else {
+            dataSource = payload.values !== undefined ? payload.values : payload;
+        }
 
-        // guarda o valor de cada chave numérica no respectivo buffer
-        for (const [key, value] of Object.entries(this.data)) {
+        for (const [key, value] of Object.entries(dataSource)) {
+            if (key === 'timestamp' || key === 'values') continue; 
+
             const num = parseFloat(value);
             if (!Number.isFinite(num)) continue;
+            
             if (!this.buffers[key]) this.buffers[key] = [];
             const buf = this.buffers[key];
-            buf.push({ value: num, time: timestampStr });
+            
+            buf.push({ value: num, time: exactTimestamp });
+
             if (buf.length > this.maxPoints) buf.shift();
         }
 
         this.draw();
     }
 
-    // Atualiza o gráfico de linha do dado selecionado utilizando o Chart.js
+    clearData() {
+        this.buffers = {};
+        this.draw();
+    }
+
     draw() {
         if (!this.chart) return;
 
@@ -392,21 +405,32 @@ export default class chartWidget extends BaseWidget {
             return;
         }
 
-        // Atualiza cores caso o usuário tenha alterado
         this.chart.data.datasets[0].borderColor = this.lineColor;
         this.chart.data.datasets[0].backgroundColor = this.lineColor;
         this.chart.data.datasets[0].pointBackgroundColor = this.lineColor;
 
-        // Passa os dados e cria labels vazias/numeradas para o eixo X do Chart.js
-        this.chart.data.labels = buf.map(item => item.time);   // Eixo X (Timestamps)
+        this.chart.data.labels = buf.map(item => this.formatChartTime(item.time));
+        
         this.chart.data.datasets[0].data = buf.map(item => item.value);
 
-
-        // Solicita ao Chart.js que redesenhe a tela
         this.chart.update();
 
-        // atualiza a leitura do valor atual na interface
         this.readout.style.color = this.lineColor;
         this.readout.innerText = buf[buf.length - 1]['value'].toFixed(2);
+    }
+
+    formatChartTime(timestamp) {
+        const parsed = new Date(timestamp);
+        if (!Number.isNaN(parsed.getTime())) {
+            return parsed.toLocaleTimeString('pt-BR', {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false
+            });
+        }
+
+        const timeMatch = String(timestamp).match(/\b\d{2}:\d{2}:\d{2}\b/);
+        return timeMatch ? timeMatch[0] : String(timestamp);
     }
 }

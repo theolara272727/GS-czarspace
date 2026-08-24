@@ -330,6 +330,15 @@ header h1 {
     cursor: pointer;
 }
 
+.source-mode-btn {
+    gap: 6px;
+    font: inherit;
+}
+
+.source-mode-btn.active-source {
+    color: #d03379;
+}
+
 /* Lógica e Estilo do Dropdown */
 .dropdown-container {
     position: relative; /* Necessário para ancorar o menu flutuante logo abaixo */
