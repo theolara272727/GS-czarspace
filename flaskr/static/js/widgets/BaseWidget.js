@@ -161,9 +161,38 @@ export default class BaseWidget {
     render() {
         if (this.containerDestino) {
             this.containerDestino.appendChild(this.element);
+            this.fitWithinContainer();
         } else {
             console.error("Contêiner de destino não encontrado");
         }
+    }
+
+    fitWithinContainer() {
+        const containerWidth = this.containerDestino.clientWidth;
+        const containerHeight = this.containerDestino.clientHeight;
+        if (!containerWidth || !containerHeight) return;
+
+        const minimumWidth = Math.min(260, containerWidth);
+        const minimumHeight = Math.min(200, containerHeight);
+        let left = Number.parseFloat(this.element.style.left) || 0;
+        let top = Number.parseFloat(this.element.style.top) || 0;
+
+        left = Math.max(0, Math.min(left, containerWidth - minimumWidth));
+        top = Math.max(0, Math.min(top, containerHeight - minimumHeight));
+
+        const width = Math.max(
+            minimumWidth,
+            Math.min(this.element.offsetWidth, containerWidth - left)
+        );
+        const height = Math.max(
+            minimumHeight,
+            Math.min(this.element.offsetHeight, containerHeight - top)
+        );
+
+        this.element.style.left = `${left}px`;
+        this.element.style.top = `${top}px`;
+        this.element.style.width = `${width}px`;
+        this.element.style.height = `${height}px`;
     }
     update(new_data){
         this.data = new_data;

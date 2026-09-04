@@ -8,81 +8,115 @@
 </head>
 <body>
     <header class="app-header">
-        <h1>Czar Ground Station</h1>
-        
+        <div class="station-brand">
+            <div class="station-mark" aria-hidden="true"><span></span></div>
+            <div>
+                <span class="station-kicker">CZARSPACE // GROUND SEGMENT</span>
+                <h1>Flight Control</h1>
+            </div>
+        </div>
+
+        <div class="station-status" aria-label="Estado da estação">
+            <div class="status-block">
+                <span class="status-label">LINK</span>
+                <span class="status-value" id="link-status"><i class="status-dot"></i> STANDBY</span>
+            </div>
+            <div class="status-block">
+                <span class="status-label">LAST PACKET</span>
+                <span class="status-value" id="last-packet-time">--:--:--</span>
+            </div>
+            <div class="status-block utc-block">
+                <span class="status-label">MISSION TIME · UTC</span>
+                <span class="status-value" id="utc-clock">--:--:--</span>
+            </div>
+        </div>
+
         <div class="header-actions">
             <button class="action-btn source-mode-btn active-source" id="btn-live" type="button" title="Telemetria ao vivo" aria-label="Telemetria ao vivo">
-                <svg width="22" height="22" aria-hidden="true">
+                <svg width="16" height="16" aria-hidden="true">
                     <use href="#icon-live"></use>
                 </svg>
-                <span>Live</span>
+                <span>LIVE</span>
             </button>
             <button class="action-btn source-mode-btn" id="btn-history" type="button" title="Reproduzir histórico" aria-label="Reproduzir histórico">
-                <svg width="22" height="22" aria-hidden="true">
+                <svg width="16" height="16" aria-hidden="true">
                     <use href="#icon-history"></use>
                 </svg>
-                <span>Hist</span>
+                <span>REPLAY</span>
             </button>
             <div class="dropdown-container">
-                <button id="addWidgetBtn" class="action-btn">
-                    <svg width="22" height="22" style="pointer-events: none; margin-right: 8px;">
+                <button id="addWidgetBtn" class="action-btn" type="button" title="Adicionar painel">
+                    <svg width="16" height="16" aria-hidden="true">
                         <use href="#icon-add-widget"></use>
                     </svg>
+                    <span>ADD PANEL</span>
                 </button>
                 
                 <div id="widgetDropdown" class="dropdown-menu">
-                    <div class="button" id="testButton">Test Widget</div>
+                    <div class="button" id="testButton">Painel básico</div>
                     <div class="button" id="rawDataButton">Terminal</div>
-                    <div class="button" id="chartButton">Gráfico</div>
+                    <div class="button" id="chartButton">Gráfico de telemetria</div>
                 </div>
             </div>
-            <div class="action-btn" id="saveModeButton">💾</div>
-            <div class="action-btn" id="settingsButton">⚙️</div>
+            <button class="action-btn icon-action" id="saveModeButton" type="button" title="Salvar configuração">
+                <svg width="17" height="17" aria-hidden="true"><use href="#save-svg"></use></svg>
+            </button>
+            <button class="action-btn icon-action" id="settingsButton" type="button" title="Configurar modos">
+                <svg width="17" height="17" aria-hidden="true"><use href="#config-svg"></use></svg>
+            </button>
         </div>
     </header>
-    <div id="history-controls" style="display: none; background: #1f2937; padding: 10px 20px; border-bottom: 1px solid #374151; gap: 15px; align-items: center; color: #e0e6ed; font-size: 0.9rem;">
-    <span style="font-weight: bold; color: #d03379;">Filtro Histórico:</span>
-    <label style="display: flex; gap: 8px; align-items: center;">
-        Início: 
-        <input type="datetime-local" id="hist-start" style="background: #111827; color: white; border: 1px solid #374151; padding: 6px; border-radius: 4px; font-family: inherit;">
-    </label>
-    <label style="display: flex; gap: 8px; align-items: center;">
-        Fim: 
-        <input type="datetime-local" id="hist-end" style="background: #111827; color: white; border: 1px solid #374151; padding: 6px; border-radius: 4px; font-family: inherit;">
-    </label>
-    <button id="fetch-history-btn" class="action-btn" style="background: #d03379; border: none; color: white; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-left: auto;">
-        Reproduzir
-    </button>
-    <label style="display: flex; gap: 8px; align-items: center;">
-        Velocidade:
-        <select id="history-speed" style="background: #111827; color: white; border: 1px solid #374151; padding: 6px; border-radius: 4px; font-family: inherit;">
+    <div class="mode-strip">
+        <span class="strip-label">MISSION MODES</span>
+        <div id="modes-tab"></div>
+        <span class="packet-format">RX · TIMESTAMP / MODE / PAYLOAD</span>
+    </div>
+    <div id="history-controls" class="history-controls">
+    <span class="strip-label">REPLAY WINDOW</span>
+    <label>START <input type="datetime-local" id="hist-start"></label>
+    <label>END <input type="datetime-local" id="hist-end"></label>
+    <button id="fetch-history-btn" class="action-btn primary-action">RUN REPLAY</button>
+    <label>SPEED
+        <select id="history-speed">
             <option value="1">1x</option>
             <option value="2">2x</option>
             <option value="5">5x</option>
             <option value="10">10x</option>
         </select>
     </label>
-    <button id="stop-history-btn" class="action-btn" style="display: none; background: #374151; border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer;">
-        Parar
-    </button>
+    <button id="stop-history-btn" class="action-btn stop-action">STOP</button>
     <span id="history-status" aria-live="polite"></span>
+    <div class="availability-row" id="availability-row">
+        <span class="availability-title">DATA AVAILABILITY</span>
+        <span class="availability-date" id="availability-start">--</span>
+        <div class="availability-track" id="availability-track" aria-label="Faixas com telemetria">
+            <span class="availability-empty">Selecione um modo para consultar</span>
+        </div>
+        <span class="availability-date" id="availability-end">--</span>
+        <button type="button" class="availability-refresh" id="availability-refresh" title="Atualizar disponibilidade">↻</button>
     </div>
-    <div id="modes-tab"></div>
-
+    </div>
     <div id="settingsMenu" class="settings-sidebar">
         <div class="sidebar-header">
-            <h2>Configurações</h2>
+            <div><span class="station-kicker">GROUND CONTROL</span><h2>Mode Registry</h2></div>
             <button id="closeSettingsBtn" class="close-btn">&times;</button>
         </div>
         <div class="sidebar-content">
-           <h3 style="margin-bottom: 10px; font-size: 1rem; color: #9ca3af;">Gerenciar Modos</h3>
+           <p class="sidebar-intro">Associe cada código recebido ao layout e à sequência de canais de telemetria.</p>
             <ul id="settingsModeList" class="mode-list"></ul>
         </div>
     </div>
-    <main>
-        
-        <div id="workspace" class="workspace"></div>
-    </main>
+    <div class="operations-shell">
+        <aside class="ops-rail" aria-label="Indicadores operacionais">
+            <span class="rail-tag">OPS</span>
+            <span class="rail-node active" title="Telemetria">TLM</span>
+            <span class="rail-node" title="Comandos">CMD</span>
+            <span class="rail-node" title="Eventos">EVT</span>
+            <span class="rail-line"></span>
+            <span class="rail-foot">GS<br>01</span>
+        </aside>
+        <main><div id="workspace" class="workspace"></div></main>
+    </div>
 
     <script src="/static/js/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -90,13 +124,14 @@
     
     <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>
 
-    <dialog id="inputModal" style="padding: 0; border: none; border-radius: 8px; background: #1f2937; color: white; width: 300px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);">
-    <div style="padding: 20px; display: flex; flex-direction: column; gap: 15px;">
-        <h3 id="inputModalTitle" style="margin: 0; font-size: 1.1rem; color: #ffffff;">Digite o valor:</h3>
-        <input type="text" id="inputModalField" style="padding: 8px; background: #111827; border: 1px solid #374151; color: white; border-radius: 4px;">
-        <div style="display: flex; justify-content: flex-end; gap: 10px;">
-            <button id="inputModalCancel" style="padding: 6px 12px; background: transparent; border: 1px solid #9ca3af; color: #9ca3af; border-radius: 4px; cursor: pointer;">Cancelar</button>
-            <button id="inputModalConfirm" style="padding: 6px 12px; background: #d03379; border: none; color: white; border-radius: 4px; cursor: pointer;">OK</button>
+    <dialog id="inputModal">
+    <div class="modal-body">
+        <span class="station-kicker">CONFIGURATION INPUT</span>
+        <h3 id="inputModalTitle">Digite o valor:</h3>
+        <input type="text" id="inputModalField">
+        <div class="modal-actions">
+            <button id="inputModalCancel">CANCEL</button>
+            <button id="inputModalConfirm">CONFIRM</button>
         </div>
     </div>
     </dialog>

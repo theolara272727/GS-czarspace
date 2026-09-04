@@ -12,28 +12,40 @@ let historicalRequestId = 0;
 let historicalTimer = null;
 let historicalPlaybackToken = 0;
 
-socket.on('new_data', (data) => {
-    let mapped_telemetry = {};
+function setLinkStatus(connected) {
+    const status = document.getElementById('link-status');
+    if (!status) return;
+    status.classList.toggle('connected', connected);
+    status.innerHTML = `<i class="status-dot"></i> ${connected ? 'NOMINAL' : 'OFFLINE'}`;
+}
 
-    if (currentMode != null && currentMode.dataTypes && currentMode.dataTypes.length > 0) {
-        
-        currentMode.dataTypes.forEach((key, index) => {
-            if (data.values && data.values[index] !== undefined) {
-                mapped_telemetry[key] = data.values[index];
-            }
-        });
-        
-        Object.assign(current_data, mapped_telemetry);
-        current_data.timestamp = data.timestamp;
-        
-        socket.emit('save_telemetry', {
-            timestamp: data.timestamp,
-            telemetry: mapped_telemetry
-        });
-        
-    } else {
-        Object.assign(current_data, data);
+function updateUtcClock() {
+    const clock = document.getElementById('utc-clock');
+    if (clock) clock.textContent = new Date().toISOString().slice(11, 19);
+}
+
+socket.on('connection_status', (data) => setLinkStatus(data?.connected === true));
+socket.on('connect', () => setLinkStatus(true));
+socket.on('disconnect', () => setLinkStatus(false));
+
+socket.on('new_data', (data) => {
+    if (!data || typeof data.values !== 'object' || Array.isArray(data.values)) return;
+    const packetTime = document.getElementById('last-packet-time');
+    if (packetTime) {
+        const received = new Date(data.receivedTimestamp || Date.now());
+        packetTime.textContent = Number.isNaN(received.getTime())
+            ? '--:--:--'
+            : received.toISOString().slice(11, 19);
     }
+    if (currentMode && currentMode.code !== data.modeCode) return;
+
+    current_data = {
+        ...data.values,
+        timestamp: data.timestamp,
+        collectionTimestamp: data.timestamp,
+        receivedTimestamp: data.receivedTimestamp,
+        modeCode: data.modeCode
+    };
     
     if (viewMode === "live") {
         updateWidgets(current_data);
@@ -72,6 +84,18 @@ function updateWidgets(data_source) {
     }
 }
 
+function sendSerialCommand(command, callback) {
+    socket.timeout(5000).emit('serial_command', { command }, (error, response) => {
+        callback(error ? {
+            ok: false,
+            message: 'Tempo limite excedido ao enviar o comando.'
+        } : response || {
+            ok: false,
+            message: 'O backend não confirmou o envio do comando.'
+        });
+    });
+}
+
 function clearWidgetData() {
     for (const widget of widget_list) {
         if (typeof widget.clearData === 'function') {
@@ -90,6 +114,86 @@ function setHistoryLoading(isLoading) {
     if (!button) return;
     button.disabled = isLoading;
     button.textContent = isLoading ? 'Buscando...' : 'Reproduzir';
+}
+
+let availabilityRequestId = 0;
+
+function toLocalDateTimeInput(date) {
+    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 16);
+}
+
+function selectAvailabilityDay(dateText) {
+    const startInput = document.getElementById('hist-start');
+    const endInput = document.getElementById('hist-end');
+    const start = new Date(`${dateText}T00:00:00.000Z`);
+    const end = new Date(start.getTime() + 24 * 60 * 60 * 1000 - 1);
+    if (startInput) startInput.value = toLocalDateTimeInput(start);
+    if (endInput) endInput.value = toLocalDateTimeInput(end);
+    setHistoryStatus(`Intervalo de ${dateText} selecionado.`);
+}
+
+function renderTelemetryAvailability(data) {
+    const track = document.getElementById('availability-track');
+    const startLabel = document.getElementById('availability-start');
+    const endLabel = document.getElementById('availability-end');
+    if (!track || !startLabel || !endLabel) return;
+
+    track.replaceChildren();
+    const days = Array.isArray(data?.days) ? data.days : [];
+    if (!data?.start || !data?.end || days.length === 0) {
+        startLabel.textContent = '--';
+        endLabel.textContent = '--';
+        const empty = document.createElement('span');
+        empty.className = 'availability-empty';
+        empty.textContent = 'Nenhuma telemetria armazenada para este modo';
+        track.appendChild(empty);
+        return;
+    }
+
+    const formatter = new Intl.DateTimeFormat('pt-BR', {
+        day: '2-digit', month: '2-digit', year: '2-digit',
+        hour: '2-digit', minute: '2-digit'
+    });
+    startLabel.textContent = formatter.format(new Date(data.start));
+    endLabel.textContent = formatter.format(new Date(data.end));
+
+    const firstDay = Date.parse(`${days[0].date}T00:00:00Z`);
+    const lastDay = Date.parse(`${days[days.length - 1].date}T00:00:00Z`);
+    const dayMs = 24 * 60 * 60 * 1000;
+    const totalDays = Math.max(1, Math.round((lastDay - firstDay) / dayMs) + 1);
+    const maximumCount = Math.max(...days.map(day => Number(day.count) || 0), 1);
+
+    days.forEach((day) => {
+        const dayTime = Date.parse(`${day.date}T00:00:00Z`);
+        const index = Math.round((dayTime - firstDay) / dayMs);
+        const segment = document.createElement('button');
+        segment.type = 'button';
+        segment.className = 'availability-segment';
+        segment.style.left = `${(index / totalDays) * 100}%`;
+        segment.style.width = `max(3px, ${(1 / totalDays) * 100}%)`;
+        segment.style.opacity = String(0.4 + 0.6 * ((Number(day.count) || 0) / maximumCount));
+        segment.title = `${day.date}: ${day.count} amostra(s). Clique para selecionar.`;
+        segment.setAttribute('aria-label', segment.title);
+        segment.addEventListener('click', () => selectAvailabilityDay(day.date));
+        track.appendChild(segment);
+    });
+}
+
+async function loadTelemetryAvailability() {
+    const requestId = ++availabilityRequestId;
+    const modeCode = currentMode?.code || '';
+    const query = modeCode ? `?modeCode=${encodeURIComponent(modeCode)}` : '';
+    try {
+        const response = await fetch(`/telemetry-availability${query}`);
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || 'Falha ao consultar disponibilidade.');
+        if (requestId === availabilityRequestId) renderTelemetryAvailability(data);
+    } catch (error) {
+        if (requestId !== availabilityRequestId) return;
+        renderTelemetryAvailability(null);
+        setHistoryStatus(error.message || 'Não foi possível consultar a disponibilidade.');
+    }
 }
 
 function stopHistoricalPlayback(message = '') {
@@ -171,7 +275,12 @@ function createWidgetFromSpec(spec) {
             widget.applyState(spec);
         }
     } else if (type === 'terminal') {
-        widget = new terminalWidget(title || 'Terminal', 'workspace', current_data);
+        widget = new terminalWidget(
+            title || 'Terminal',
+            'workspace',
+            current_data,
+            sendSerialCommand
+        );
     } else {
         widget = new BaseWidget(title || 'Widget', 'workspace');
     }
@@ -204,17 +313,38 @@ async function fetchModesFromServer() {
 }
 
 async function saveModesToServer() {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 8000);
     try {
         const response = await fetch('/modes', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ modes: savedModes })
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify({ modes: savedModes }),
+            signal: controller.signal
         });
-        if (!response.ok) throw new Error('Falha ao salvar modos');
-        await response.json();
+        const contentType = response.headers.get('content-type') || '';
+        const data = contentType.includes('application/json')
+            ? await response.json()
+            : { message: `Resposta inesperada do servidor (HTTP ${response.status}).` };
+        if (!response.ok) throw new Error(data.message || 'Falha ao salvar modos');
+        if (Array.isArray(data.modes) && data.modes.length === savedModes.length) {
+            data.modes.forEach((mode, index) => Object.assign(savedModes[index], mode));
+        }
+        return true;
     } catch (error) {
         console.error(error);
-        alert('Não foi possível salvar os modos.');
+        const message = error.name === 'AbortError'
+            ? 'O servidor demorou demais para responder.'
+            : error instanceof TypeError
+                ? 'Não foi possível conectar ao backend. Reinicie o servidor Flask e tente novamente.'
+                : error.message;
+        alert(message || 'Não foi possível salvar os modos.');
+        return false;
+    } finally {
+        window.clearTimeout(timeout);
     }
 }
 
@@ -241,6 +371,7 @@ function getCurrentModeSpec(name) {
     
     return {
         name,
+        code: existingMode?.code || '',
         dataTypes: existingMode && existingMode.dataTypes ? existingMode.dataTypes : [],
         widgets: widget_list.filter((widget) => widget.element?.isConnected).map((widget) => {
             if (typeof widget.serialize === 'function') {
@@ -266,13 +397,16 @@ function renderModesUI() {
 
         const modeButton = document.createElement('div');
         modeButton.className = 'button';
-        modeButton.textContent = mode.name;
-        if (modeIndex === 0) modeButton.classList.add('active-mode');
+        modeButton.textContent = `${mode.code || '--'} · ${mode.name}`;
+        if (currentMode === mode || (!currentMode && modeIndex === 0)) {
+            modeButton.classList.add('active-mode');
+        }
         
         modeButton.addEventListener('click', (event) => {
             document.querySelectorAll('#modes-tab .button').forEach(btn => btn.classList.remove('active-mode'));
             event.target.classList.add('active-mode');
             loadMode(mode);
+            if (viewMode === 'historical') loadTelemetryAvailability();
         });
         modesTab.appendChild(modeButton);
 
@@ -304,6 +438,27 @@ function renderModesUI() {
         cardHeader.appendChild(nameSpan);
         cardHeader.appendChild(deleteBtn);
         card.appendChild(cardHeader);
+
+        const codeLabel = document.createElement('label');
+        codeLabel.className = 'mode-code-label';
+        codeLabel.textContent = 'Código hexadecimal';
+        const codeInput = document.createElement('input');
+        codeInput.className = 'mode-code-input';
+        codeInput.type = 'text';
+        codeInput.placeholder = '0x01';
+        codeInput.value = mode.code || '';
+        codeInput.addEventListener('change', async () => {
+            const previousCode = mode.code || '';
+            mode.code = codeInput.value.trim();
+            if (!await saveModesToServer()) {
+                mode.code = previousCode;
+                codeInput.value = previousCode;
+                return;
+            }
+            renderModesUI();
+        });
+        codeLabel.appendChild(codeInput);
+        card.appendChild(codeLabel);
 
         const dataSection = document.createElement('div');
         dataSection.className = 'data-types-section';
@@ -416,28 +571,17 @@ function askInput(title) {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+    updateUtcClock();
+    window.setInterval(updateUtcClock, 1000);
     const settingsButton = document.getElementById('settingsButton');
     const settingsMenu = document.getElementById('settingsMenu');
     const closeSettingsBtn = document.getElementById('closeSettingsBtn');
     const saveModeButton = document.getElementById('saveModeButton');
 
     if (settingsButton) {
-        settingsButton.innerHTML = `
-            <svg width="22" height="22" style="pointer-events: none;color: #ffffff;fill: none">
-                <use href="#config-svg"></use>
-            </svg>
-        `;
         settingsButton.addEventListener('click', () => {
             settingsMenu.classList.add('open');
         });
-    }
-
-    if (saveModeButton) {
-        saveModeButton.innerHTML = `
-            <svg width="18" height="18" style="pointer-events: none; margin-right: 6px;color: #ffffff;">
-                <use href="#save-svg"></use>
-            </svg>
-        `;
     }
 
     closeSettingsBtn.addEventListener('click', () => {
@@ -461,7 +605,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     const createRawDataButton = document.getElementById('rawDataButton');
     if (createRawDataButton) {
         createRawDataButton.addEventListener('click', () => {
-            const widget = registerWidget(new terminalWidget('Terminal', 'workspace', current_data));
+            const widget = registerWidget(new terminalWidget(
+                'Terminal',
+                'workspace',
+                current_data,
+                sendSerialCommand
+            ));
             widget.render();
         });
     }
@@ -488,11 +637,17 @@ document.addEventListener('DOMContentLoaded', async () => {
                 }
                 existingMode.widgets = structuredClone(getCurrentModeSpec(name).widgets);            } 
             else {
-                savedModes.push(getCurrentModeSpec(name));
+                const code = await askInput('Código hexadecimal do modo (ex.: 0x01):');
+                if (!code) {
+                    alert('Informe o código hexadecimal do modo.');
+                    return;
+                }
+                const newMode = getCurrentModeSpec(name);
+                newMode.code = code;
+                savedModes.push(newMode);
             }
 
-            await saveModesToServer();
-            renderModesUI(); 
+            if (await saveModesToServer()) renderModesUI();
         });
     }
 
@@ -544,6 +699,7 @@ const historyControls = document.getElementById('history-controls');
         
         document.getElementById('btn-history').classList.add('active-source');
         document.getElementById('btn-live').classList.remove('active-source');
+        loadTelemetryAvailability();
 
         if (histEnd && !histEnd.value) {
             const now = new Date();
@@ -579,6 +735,7 @@ const historyControls = document.getElementById('history-controls');
             socket.emit('time_series', { 
                 start: startUTC, 
                 end: endUTC,
+                modeCode: currentMode?.code || null,
                 requestId: historicalRequestId
             });
         });
@@ -590,6 +747,11 @@ const historyControls = document.getElementById('history-controls');
         });
     }
 
+    document.getElementById('availability-refresh')?.addEventListener(
+        'click', loadTelemetryAvailability
+    );
+
     await fetchModesFromServer();
     renderModesUI();
+    if (savedModes.length > 0) loadMode(savedModes[0]);
 });
