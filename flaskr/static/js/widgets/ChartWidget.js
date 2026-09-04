@@ -1,8 +1,9 @@
 import BaseWidget from "./BaseWidget.js";
+import { registerWidgetType } from './WidgetRegistry.js';
 
 const Chart = window.Chart;
 
-export default class chartWidget extends BaseWidget {
+class chartWidget extends BaseWidget {
     constructor(title, idContainerDestino, data) {
         super(title, idContainerDestino);
 
@@ -25,10 +26,6 @@ export default class chartWidget extends BaseWidget {
         this.closeWidget.addEventListener('click', () => {
             this.destroyChart();
         });
-    }
-
-    getKind() {
-        return 'chart';
     }
 
     destroyChart() {
@@ -434,3 +431,7 @@ refreshKeys(payload) {
         return timeMatch ? timeMatch[0] : String(timestamp);
     }
 }
+
+registerWidgetType('chart', chartWidget, 'Gráfico');
+
+export default chartWidget;

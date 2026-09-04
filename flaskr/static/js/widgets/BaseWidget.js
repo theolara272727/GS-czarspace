@@ -1,4 +1,6 @@
-export default class BaseWidget {
+import { registerWidgetType } from './WidgetRegistry.js';
+
+class BaseWidget {
     constructor(title, idContainerDestino) {
         this.title = title;
         this.containerDestino = document.getElementById(idContainerDestino);
@@ -127,7 +129,7 @@ export default class BaseWidget {
     }
     //Retorna o tipo do widget, usado para salvar a disposição dos widgets
     getKind() {
-        return 'widget';
+        return this.constructor.widgetType || 'widget';
     }
 
     //Converte para json para salvar a disposição do widget. Em novos widgest é importante colocar informações adicionais que devem ser guardadas
@@ -202,3 +204,7 @@ export default class BaseWidget {
         this.data = undefined;
     }
 }
+
+registerWidgetType('widget', BaseWidget);
+
+export default BaseWidget;

@@ -2,6 +2,7 @@ import BaseWidget from './widgets/BaseWidget.js';
 import terminalWidget from './widgets/terminalWidget.js';
 import chartWidget from './widgets/ChartWidget.js';
 import MapWidget from './widgets/MapWidget.js';
+import { createWidgetFromSpec as restoreWidgetFromSpec } from './widgets/WidgetRegistry.js';
 
 const socket = io();
 let current_data = {};
@@ -267,30 +268,11 @@ function clearWorkspace() {
 }
 
 function createWidgetFromSpec(spec) {
-    let widget;
-    const { type, title } = spec;
-
-    if (type === 'chart') {
-        widget = new chartWidget(title || 'Gráfico', 'workspace', current_data);
-        if (typeof widget.applyState === 'function') {
-            widget.applyState(spec);
-        }
-    } else if (type === 'terminal') {
-        widget = new terminalWidget(
-            title || 'Terminal',
-            'workspace',
-            current_data,
-            sendSerialCommand
-        );
-    } else {
-        widget = new BaseWidget(title || 'Widget', 'workspace');
-    }
-
-    if (typeof widget.restoreLayout === 'function') {
-        widget.restoreLayout(spec);
-    }
-
-    return widget;
+    return restoreWidgetFromSpec(spec, {
+        containerId: 'workspace',
+        data: current_data,
+        sendCommand: sendSerialCommand
+    });
 }
 
 function isValidWidgetSpec(spec) {
@@ -627,7 +609,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const createMaptButton = document.getElementById('mapButton');
     if (createMaptButton) {
         createMaptButton.addEventListener('click', () => {
-            const widget = registerWidget(new MapWidget('Gráfico', 'workspace', current_data));
+            const widget = registerWidget(new MapWidget('Mapa', 'workspace', current_data));
             widget.render();
         });
     }

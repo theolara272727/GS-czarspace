@@ -1,7 +1,8 @@
 // Lembre-se de importar a classe pai (ajuste o caminho se necessário)
 import BaseWidget from './BaseWidget.js';
+import { registerWidgetType } from './WidgetRegistry.js';
 
-export default class MapWidget extends BaseWidget {
+class MapWidget extends BaseWidget {
     constructor(title, idContainerDestino) {
         super(title, idContainerDestino);
 
@@ -17,18 +18,23 @@ export default class MapWidget extends BaseWidget {
 
         this.content.appendChild(this.mapContainer);
 
-        const observer = new ResizeObserver(() => {
+        this.resizeObserver = new ResizeObserver(() => {
             if (this.map) {
                 this.map.invalidateSize();
             }
         });
-        observer.observe(this.content);
+        this.resizeObserver.observe(this.content);
+
+        this.closeWidget.addEventListener('click', () => this.destroyMap());
     }
 
     render() {
         super.render();
         
-        setTimeout(() => {
+        this.renderTimer = setTimeout(() => {
+            this.renderTimer = null;
+            if (!this.mapContainer.isConnected) return;
+
             this.map = L.map(this.mapId).setView([-19.9167, -43.9345], 13);
 
             L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -54,6 +60,17 @@ export default class MapWidget extends BaseWidget {
             this.map.on('dragstart', soltarCamera);
             this.map.on('click', soltarCamera);
         }, 0);
+    }
+
+    destroyMap() {
+        if (this.renderTimer != null) {
+            clearTimeout(this.renderTimer);
+            this.renderTimer = null;
+        }
+        if (this.map) {
+            this.map.remove();
+            this.map = null;
+        }
     }
 
     obterCorPorAltitude(altitude) {
@@ -190,4 +207,15 @@ export default class MapWidget extends BaseWidget {
             }
         }
     }
+
+    cleanup() {
+        this.resizeObserver?.disconnect();
+        this.resizeObserver = null;
+        this.destroyMap();
+        super.cleanup();
+    }
 }
+
+registerWidgetType('map', MapWidget, 'Mapa');
+
+export default MapWidget;

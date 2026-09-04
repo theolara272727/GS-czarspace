@@ -1,6 +1,7 @@
 import BaseWidget from "./BaseWidget.js"
+import { registerWidgetType } from './WidgetRegistry.js';
 
-export default class rawDataWidget extends BaseWidget{
+class rawDataWidget extends BaseWidget{
     constructor(title, idContainerDestino, data, sendCommand){
         super(title,idContainerDestino)
         this.data = data;
@@ -63,10 +64,6 @@ export default class rawDataWidget extends BaseWidget{
 
         this.element.style.width = '300px'; 
         this.element.style.height = '200px';
-    }
-
-    getKind() {
-        return 'terminal';
     }
 
     serialize() {
@@ -153,3 +150,7 @@ export default class rawDataWidget extends BaseWidget{
         this.output.replaceChildren();
     }
 }
+
+registerWidgetType('terminal', rawDataWidget, 'Terminal');
+
+export default rawDataWidget;
