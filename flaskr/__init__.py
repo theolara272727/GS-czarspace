@@ -5,6 +5,7 @@ import serial
 import threading
 import os
 import time
+import math
 import sqlite3
 from contextlib import closing
 from flask_socketio import SocketIO, emit
@@ -264,17 +265,70 @@ def parse_serial_message(raw_message, modes):
     }
 
 
+# def read_serial(app):
+#     with app.app_context():
+#         with serial_lock:
+#             connection = _get_serial_connection()
+#             raw_message = connection.readline()
+#     if not raw_message:
+#         return None
+#     with config_lock:
+#         modes = _validate_modes(_load_modes(app))
+#     return parse_serial_message(raw_message, modes)
+tempo_simulacao = 0.0
 def read_serial(app):
-    with app.app_context():
-        with serial_lock:
-            connection = _get_serial_connection()
-            raw_message = connection.readline()
-    if not raw_message:
-        return None
-    with config_lock:
-        modes = _validate_modes(_load_modes(app))
-    return parse_serial_message(raw_message, modes)
+    global tempo_simulacao
+    
+    # Pausa de 0.5 segundos para simular a taxa de amostragem do DW1000
+    time.sleep(0.5)
+    tempo_simulacao += 0.05 # Velocidade do movimento
+    
+    t = tempo_simulacao
 
+    # 1. Simulação das "Órbitas" (Coordenadas X, Y, Z no espaço)
+    # Satélite 1: Órbita baixa, movimento circular rápido
+    x1 = 40 * math.cos(t)
+    y1 = 40 * math.sin(t)
+    z1 = 30 + 5 * math.sin(t * 0.5)
+
+    # Satélite 2: Órbita média, velocidade e fase diferentes
+    x2 = 60 * math.cos(t * 0.8 + 1.2)
+    y2 = 60 * math.sin(t * 0.8 + 1.2)
+    z2 = 45 + 10 * math.cos(t * 0.3)
+
+    # Satélite 3: Órbita elíptica
+    x3 = 80 * math.cos(t * 0.5 + 2.5)
+    y3 = 50 * math.sin(t * 0.5 + 2.5)
+    z3 = 60
+
+    # 2. Cálculo das distâncias reais baseado nas posições (Evita triângulos impossíveis)
+    # A Ground Station está fixa em (0, 0, 0)
+    dA1 = math.sqrt(x1**2 + y1**2 + z1**2)
+    dA2 = math.sqrt(x2**2 + y2**2 + z2**2)
+    dA3 = math.sqrt(x3**2 + y3**2 + z3**2)
+
+    d12 = math.sqrt((x2 - x1)**2 + (y2 - y1)**2 + (z2 - z1)**2)
+    d23 = math.sqrt((x3 - x2)**2 + (y3 - y2)**2 + (z3 - z2)**2)
+    d13 = math.sqrt((x3 - x1)**2 + (y3 - y1)**2 + (z3 - z1)**2)
+
+    # 3. Retorna os dados forjados no mesmo formato que o parse_serial_message entregaria
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+
+    return {
+        'timestamp': now,
+        'receivedTimestamp': now,
+        'modeCode': '0x01', # ATENÇÃO: Certifique-se de usar o código correto do seu painel
+        'modeName': 'Simulacao Constelacao',
+        'values': {
+            'dA1': round(dA1, 2),
+            'dA2': round(dA2, 2),
+            'dA3': round(dA3, 2),
+            'd12': round(d12, 2),
+            'd23': round(d23, 2),
+            'd13': round(d13, 2)
+        }
+    }
 
 def emit_data(app):
     while True:

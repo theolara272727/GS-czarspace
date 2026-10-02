@@ -7,6 +7,14 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
     <link rel='stylesheet' href="{{ url_for('static',filename='css/style.css')}}"></link>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script type="importmap">
+        {
+            "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
     <script src="https://unpkg.com/leaflet.marker.slideto@0.2.0/Leaflet.Marker.SlideTo.js"></script>
 </head>
 <body>
@@ -60,6 +68,7 @@
                     <div class="button" id="rawDataButton">Terminal</div>
                     <div class="button" id="chartButton">Gráfico</div>
                     <div class="button" id="mapButton">Radar de Voo</div>
+                    <div class="button" id="constellationButton">Constelação 3D</div>
                 </div>
             </div>
             <button class="action-btn icon-action" id="saveModeButton" type="button" title="Salvar configuração">
