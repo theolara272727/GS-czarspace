@@ -69,6 +69,11 @@ class MapWidget extends BaseWidget {
             }).addTo(this.map);
             
             const soltarCamera = () => {
+                // 1. Esconde o painel imediatamente, independente de ter avião focado ou não
+                if (this.infoPanel) {
+                    this.infoPanel.style.display = 'none';
+                }
+                
                 if (this.aviaoFocado !== null) {
                     let idDoAviaoSeguido = this.aviaoFocado;
                     this.aviaoFocado = null; 
@@ -80,8 +85,6 @@ class MapWidget extends BaseWidget {
                             keepAtCenter: false
                         });
                     }
-                    // Esconde o painel ao soltar a câmera/clicar no mapa
-                    this.infoPanel.style.display = 'none';
                 }
             };
             
@@ -157,7 +160,8 @@ class MapWidget extends BaseWidget {
         let idVoo = dadosDoVoo.id;
         let lat = dadosDoVoo.lat;
         let lng = dadosDoVoo.lng;
-        let corDin = this.obterCorPorAltitude(dadosDoVoo.altitude);
+        let corDin = '#230838';
+        // let corDin = this.obterCorPorAltitude(dadosDoVoo.altitude);
 
         // --- LÓGICA DO RASTRO (TRACK/POLYLINE) ---
         if (!this.historicoPosicoes[idVoo]) {
