@@ -1,4 +1,3 @@
-// Lembre-se de importar a classe pai (ajuste o caminho se necessário)
 import BaseWidget from './BaseWidget.js';
 import { registerWidgetType } from './WidgetRegistry.js';
 
@@ -8,13 +7,40 @@ class MapWidget extends BaseWidget {
 
         this.aviaoFocado = null;
         this.marcadoresAtivos = {};
-        this.ultimasCoordenadas = {};
+        this.ultimasCoordenadas = {}; // Para o cálculo do ângulo visual
         this.ultimosAngulos = {};
+        
+        // NOVAS VARIÁVEIS PARA O RASTRO E INFORMAÇÕES
+        this.linhasDeRastro = {}; // Guarda as polylines de cada avião
+        this.historicoPosicoes = {}; // Guarda as coordenadas para desenhar a linha
 
         this.mapContainer = document.createElement('div');
         this.mapId = 'mapa-' + Math.random().toString(36).substring(2, 9);
         this.mapContainer.id = this.mapId;
         this.mapContainer.className = 'map-container';
+        this.mapContainer.style.position = 'relative'; // Necessário para o painel flutuante
+        this.mapContainer.style.height = '100%'; // Garante que o mapa ocupe o widget
+
+        // CRIAÇÃO DO PAINEL DE INFORMAÇÕES (Oculto por padrão)
+        this.infoPanel = document.createElement('div');
+        this.infoPanel.className = 'map-info-panel';
+        this.infoPanel.style.cssText = `
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 220px;
+            background: rgba(0, 0, 0, 0.8);
+            color: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 13px;
+            z-index: 1000;
+            display: none;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            border: 1px solid #444;
+        `;
+        this.mapContainer.appendChild(this.infoPanel);
 
         this.content.appendChild(this.mapContainer);
 
@@ -54,6 +80,8 @@ class MapWidget extends BaseWidget {
                             keepAtCenter: false
                         });
                     }
+                    // Esconde o painel ao soltar a câmera/clicar no mapa
+                    this.infoPanel.style.display = 'none';
                 }
             };
             
@@ -74,42 +102,53 @@ class MapWidget extends BaseWidget {
     }
 
     obterCorPorAltitude(altitude) {
-        if (altitude < 5000)  return '#d03379'; // Rosa (Muito Baixo)
-        if (altitude < 10000) return '#d08a33'; // Laranja (Baixo)
+        if (altitude < 5000)  return '#d03379'; // Rosa 
+        if (altitude < 10000) return '#d08a33'; // Laranja
         if (altitude < 15000) return '#d0d033'; // Amarelo
         if (altitude < 20000) return '#33d08a'; // Verde
         if (altitude < 30000) return '#33d0d0'; // Ciano
-        if (altitude < 40000) return '#3379d0'; // Azul (Cruzeiro)
-        return '#a333d0';                       // Roxo (Muito Alto)
+        if (altitude < 40000) return '#3379d0'; // Azul 
+        return '#a333d0';                       // Roxo 
     }
 
-    // Retorna agora um objeto para sabermos se devemos avançar a âncora de coordenadas
     calcularAnguloDirecao(idVoo, latAnterior, lngAnterior, latAtual, lngAtual) {
         let dx = lngAtual - lngAnterior;
         let dy = latAtual - latAnterior;
-
         let distancia = Math.sqrt(dx * dx + dy * dy);
         
-        // Se a distância for muito curta, devolvemos o ângulo antigo e dizemos para NÃO atualizar a âncora
         if (distancia < 0.00005) { 
             return { angulo: this.ultimosAngulos[idVoo] || 0, atualizaFiltro: false };
         }
 
         let anguloGraus = Math.atan2(dy, dx) * (180 / Math.PI);
         let anguloAjustado = (90 - anguloGraus + 360) % 360;
-
         let anguloAnterior = this.ultimosAngulos[idVoo] || 0;
         let anguloAnteriorBase = (anguloAnterior % 360 + 360) % 360; 
         
         let diferenca = anguloAjustado - anguloAnteriorBase;
-
         if (diferenca > 180) diferenca -= 360;
-        if (diferenca <= -180) diferenca += 360; // Alterado para <= para precaver inversões exatas
+        if (diferenca <= -180) diferenca += 360; 
 
         let anguloFinal = anguloAnterior + diferenca;
-
         this.ultimosAngulos[idVoo] = anguloFinal;
         return { angulo: anguloFinal, atualizaFiltro: true };
+    }
+    
+    // NOVA FUNÇÃO: Atualiza os dados no painel HTML
+    atualizarPainel(dadosDoVoo) {
+        this.infoPanel.innerHTML = `
+            <div style="font-size: 16px; font-weight: bold; border-bottom: 1px solid #555; padding-bottom: 5px; margin-bottom: 10px; color: #ffeb3b;">
+                Flight: ${dadosDoVoo.id}
+            </div>
+            <div><span style="color:#aaa;">Hex:</span> ${dadosDoVoo.hex || 'N/A'}</div>
+            <div><span style="color:#aaa;">Alt:</span> ${dadosDoVoo.altitude} ft</div>
+            <div><span style="color:#aaa;">Speed:</span> ${dadosDoVoo.speed || 0} kt</div>
+            <div><span style="color:#aaa;">Track:</span> ${dadosDoVoo.track || 0}°</div>
+            <div style="margin-top: 10px; border-top: 1px dashed #555; padding-top: 5px;">
+                <span style="color:#aaa;">Lat:</span> ${dadosDoVoo.lat} <br>
+                <span style="color:#aaa;">Lon:</span> ${dadosDoVoo.lng}
+            </div>
+        `;
     }
 
     atualizarAviao(dadosDoVoo) {
@@ -118,8 +157,36 @@ class MapWidget extends BaseWidget {
         let idVoo = dadosDoVoo.id;
         let lat = dadosDoVoo.lat;
         let lng = dadosDoVoo.lng;
+        let corDin = this.obterCorPorAltitude(dadosDoVoo.altitude);
 
-        // Recupera a âncora ou cria uma nova se for o primeiro registo
+        // --- LÓGICA DO RASTRO (TRACK/POLYLINE) ---
+        if (!this.historicoPosicoes[idVoo]) {
+            this.historicoPosicoes[idVoo] = [];
+        }
+        
+        // Adiciona a nova posição ao histórico
+        let novaPosicao = [lat, lng];
+        this.historicoPosicoes[idVoo].push(novaPosicao);
+        
+        // Limita o histórico a 100 pontos para não pesar a memória
+        if (this.historicoPosicoes[idVoo].length > 100) {
+            this.historicoPosicoes[idVoo].shift();
+        }
+
+        // Desenha ou atualiza a linha no mapa
+        if (this.linhasDeRastro[idVoo]) {
+            this.linhasDeRastro[idVoo].setLatLngs(this.historicoPosicoes[idVoo]);
+            this.linhasDeRastro[idVoo].setStyle({ color: corDin }); // Atualiza a cor da linha se a altitude mudar
+        } else {
+            this.linhasDeRastro[idVoo] = L.polyline(this.historicoPosicoes[idVoo], {
+                color: corDin,
+                weight: 2,
+                opacity: 0.6,
+                dashArray: '5, 5' // Faz a linha ser tracejada
+            }).addTo(this.map);
+        }
+        // ------------------------------------------
+
         let coordAnterior = this.ultimasCoordenadas[idVoo];
         if (!coordAnterior) {
             coordAnterior = { lat: lat, lng: lng };
@@ -129,14 +196,10 @@ class MapWidget extends BaseWidget {
         let resultado = this.calcularAnguloDirecao(idVoo, coordAnterior.lat, coordAnterior.lng, lat, lng);
         let angulo = resultado.angulo;
         
-        // A magia da acumulação: SÓ guardamos a posição nova se ele se moveu significativamente!
         if (resultado.atualizaFiltro) {
             this.ultimasCoordenadas[idVoo] = { lat: lat, lng: lng };
         }
 
-        let corDin = this.obterCorPorAltitude(dadosDoVoo.altitude);
-
-        // Adicionada uma transição de 'fill' para a cor desvanecer suavemente
         const gerarSVG = (cor, rotacao) => `
             <svg style="transform: rotate(${rotacao}deg); transform-origin: center; transition: transform 1.5s ease-out;" 
                  viewBox="0 0 24 24" width="38" height="38" xmlns="http://www.w3.org/2000/svg">
@@ -144,6 +207,9 @@ class MapWidget extends BaseWidget {
                       fill="${cor}" style="transition: fill 1.5s ease-out;" />
             </svg>
         `;
+
+        // TEXTO DO HOVER (Agora mostra só o ID)
+        let tooltipSimples = `<b>${idVoo}</b>`;
 
         if (this.marcadoresAtivos[idVoo]) {
             let marker = this.marcadoresAtivos[idVoo];
@@ -154,16 +220,18 @@ class MapWidget extends BaseWidget {
                 keepAtCenter: deveCentralizar,   
             });
 
-            let textoAtualizado = `<b>${idVoo}</b><br>${dadosDoVoo.lat}<br>${dadosDoVoo.lng}<br>${dadosDoVoo.altitude} ft`;
-            marker.setTooltipContent(textoAtualizado);
+            marker.setTooltipContent(tooltipSimples);
             
-            // Em vez de recriar todo o ícone (o que quebrava a animação CSS), editamos o SVG existente diretamente no DOM!
+            // Se este for o avião atualmente focado, atualiza o painel lateral em tempo real
+            if (deveCentralizar) {
+                this.atualizarPainel(dadosDoVoo);
+            }
+            
             let iconElement = marker.getElement();
             if (iconElement) {
                 let svg = iconElement.querySelector('svg');
                 if (svg) {
                     svg.style.transform = `rotate(${angulo}deg)`;
-                    
                     let path = svg.querySelector('path');
                     if (path) path.setAttribute('fill', corDin);
                 }
@@ -176,11 +244,9 @@ class MapWidget extends BaseWidget {
                 iconSize: [38, 38],
                 iconAnchor: [19, 19]
             });
-
-            let textoLateral = `<b>${idVoo}</b><br>${dadosDoVoo.lat}<br>${dadosDoVoo.lng}<br>${dadosDoVoo.altitude} ft`;
             
             let novoMarcador = L.marker([lat, lng], {icon: icone})
-                .bindTooltip(textoLateral, { 
+                .bindTooltip(tooltipSimples, { 
                     permanent: false,      
                     direction: 'right',    
                     offset: [15, 0],       
@@ -189,10 +255,14 @@ class MapWidget extends BaseWidget {
                 .addTo(this.map);
             
             novoMarcador.on('click', () => {
+                // Alterna o foco do avião
                 if (this.aviaoFocado === idVoo) {
                     this.aviaoFocado = null;
+                    this.infoPanel.style.display = 'none'; // Esconde painel
                 } else {
                     this.aviaoFocado = idVoo; 
+                    this.atualizarPainel(dadosDoVoo); // Preenche painel
+                    this.infoPanel.style.display = 'block'; // Mostra painel
                 }
             });
             

@@ -387,20 +387,45 @@ class ConstellationWidget extends BaseWidget {
         super.update(newData);
         if (!newData) return;
 
-        const d12 = Number(newData.dw1000_d12 ?? newData.d12) || 0;
-        const d23 = Number(newData.dw1000_d23 ?? newData.d23) || 0;
-        const d13 = Number(newData.dw1000_d13 ?? newData.d13) || 0;
-        const dA1 = Number(newData.dw1000_dA1 ?? newData.dA1) || 0;
-        const dA2 = Number(newData.dw1000_dA2 ?? newData.dA2) || 0;
-        const dA3 = Number(newData.dw1000_dA3 ?? newData.dA3) || 0;
+        const d12 = Number(newData.dw1000_d12 ?? newData.d12) || 0.1;
+        const d23 = Number(newData.dw1000_d23 ?? newData.d23) || 0.1;
+        const d13 = Number(newData.dw1000_d13 ?? newData.d13) || 0.1;
+        const dA1 = Number(newData.dw1000_dA1 ?? newData.dA1) || 0.1;
+        const dA2 = Number(newData.dw1000_dA2 ?? newData.dA2) || 0.1;
+        const dA3 = Number(newData.dw1000_dA3 ?? newData.dA3) || 0.1;
 
+        // 1. GS fixa na origem (0, 0, 0)
         this.sats[0].position.set(0, 0, 0);
+        
+        // 2. Satélite 1 alinhado no eixo X positivo (referência do sistema)
         this.sats[1].position.set(dA1, 0, 0); 
-        this.sats[2].position.set(d12, 0, dA2);
+        
+        // 3. Satélite 2 encontrado por trilateração entre GS (dA2) e Sat1 (d12)
+        // Usando a Lei dos Cossenos para achar o ângulo: dA2^2 = dA1^2 + d12^2 - 2*dA1*d12*cos(theta)
+        const cosTheta2 = (dA1**2 + dA2**2 - d12**2) / (2 * dA1 * dA2 || 1);
+        const clampedCos2 = Math.max(-1, Math.min(1, cosTheta2)); // Previne NaN por imprecisão
+        
+        const x2 = dA2 * clampedCos2;
+        const y2 = Math.sqrt(Math.max(0, dA2**2 - x2**2));
+        this.sats[2].position.set(x2, y2, 0);
 
-        const x3 = (d12 ** 2 + d13 ** 2 - d23 ** 2) / (2 * d12 || 1);
-        const y3 = Math.sqrt(Math.max(0, d13 ** 2 - x3 ** 2));
-        this.sats[3].position.set(x3, y3, dA3);
+        // 4. Satélite 3 encontrado por trilateração entre GS (dA3) e Sat1 (d13)
+        const cosTheta3 = (dA1**2 + dA3**2 - d13**2) / (2 * dA1 * dA3 || 1);
+        const clampedCos3 = Math.max(-1, Math.min(1, cosTheta3));
+        
+        const x3 = dA3 * clampedCos3;
+        
+        // Para o Y3, precisamos decidir se ele está "acima" ou "abaixo" do eixo X.
+        // Como temos a distância d23, podemos testar qual sinal de Y3 se aproxima mais da distância real.
+        let y3_positive = Math.sqrt(Math.max(0, dA3**2 - x3**2));
+        let y3_negative = -y3_positive;
+        
+        const distTestPos = Math.sqrt((x2 - x3)**2 + (y2 - y3_positive)**2);
+        const distTestNeg = Math.sqrt((x2 - x3)**2 + (y2 - y3_negative)**2);
+        
+        const y3 = (Math.abs(distTestPos - d23) < Math.abs(distTestNeg - d23)) ? y3_positive : y3_negative;
+
+        this.sats[3].position.set(x3, y3, 0);
 
         // Condiciona o ajuste da câmera ao estado do botão
         if (this.isAutoZoomEnabled) {

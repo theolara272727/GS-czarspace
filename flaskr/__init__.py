@@ -276,57 +276,59 @@ def parse_serial_message(raw_message, modes):
 #         modes = _validate_modes(_load_modes(app))
 #     return parse_serial_message(raw_message, modes)
 tempo_simulacao = 0.0
+
 def read_serial(app):
     global tempo_simulacao
     
-    # Pausa de 0.5 segundos para simular a taxa de amostragem do DW1000
+    # Pausa de 0.5 segundos para simular a taxa de amostragem
     time.sleep(0.5)
-    tempo_simulacao += 0.05 # Velocidade do movimento
+    tempo_simulacao += 0.05 
     
     t = tempo_simulacao
 
-    # 1. Simulação das "Órbitas" (Coordenadas X, Y, Z no espaço)
-    # Satélite 1: Órbita baixa, movimento circular rápido
-    x1 = 40 * math.cos(t)
-    y1 = 40 * math.sin(t)
-    z1 = 30 + 5 * math.sin(t * 0.5)
+    # Simulação dos Aviões
+    lat1 = -19.9167 + 0.05 * math.cos(t)
+    lng1 = -43.9345 + 0.05 * math.sin(t)
+    alt1 = 15000 + 3000 * math.sin(t * 0.5)
+    speed1 = 492 + 20 * math.sin(t)
+    track1 = (math.atan2(math.cos(t), -math.sin(t)) * (180 / math.pi) + 360) % 360
+    
+    lat2 = -19.9167 + 0.02 * math.cos(t * 1.5 + 1.2)
+    lng2 = -43.9345 + 0.02 * math.sin(t * 1.5 + 1.2)
+    alt2 = 8000 + 1000 * math.cos(t * 0.8)
+    speed2 = 352 + 15 * math.cos(t * 1.5)
+    track2 = (math.atan2(math.cos(t * 1.5 + 1.2), -math.sin(t * 1.5 + 1.2)) * (180 / math.pi) + 360) % 360
 
-    # Satélite 2: Órbita média, velocidade e fase diferentes
-    x2 = 60 * math.cos(t * 0.8 + 1.2)
-    y2 = 60 * math.sin(t * 0.8 + 1.2)
-    z2 = 45 + 10 * math.cos(t * 0.3)
-
-    # Satélite 3: Órbita elíptica
-    x3 = 80 * math.cos(t * 0.5 + 2.5)
-    y3 = 50 * math.sin(t * 0.5 + 2.5)
-    z3 = 60
-
-    # 2. Cálculo das distâncias reais baseado nas posições (Evita triângulos impossíveis)
-    # A Ground Station está fixa em (0, 0, 0)
-    dA1 = math.sqrt(x1**2 + y1**2 + z1**2)
-    dA2 = math.sqrt(x2**2 + y2**2 + z2**2)
-    dA3 = math.sqrt(x3**2 + y3**2 + z3**2)
-
-    d12 = math.sqrt((x2 - x1)**2 + (y2 - y1)**2 + (z2 - z1)**2)
-    d23 = math.sqrt((x3 - x2)**2 + (y3 - y2)**2 + (z3 - z2)**2)
-    d13 = math.sqrt((x3 - x1)**2 + (y3 - y1)**2 + (z3 - z1)**2)
-
-    # 3. Retorna os dados forjados no mesmo formato que o parse_serial_message entregaria
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
 
+    # Estrutura com os novos campos hex, speed e track
     return {
         'timestamp': now,
         'receivedTimestamp': now,
-        'modeCode': '0x01', # ATENÇÃO: Certifique-se de usar o código correto do seu painel
-        'modeName': 'Simulacao Constelacao',
+        'modeCode': '0x01', # ATENÇÃO: Verifique o código selecionado no seu painel
+        'modeName': 'Simulacao Map',
         'values': {
-            'dA1': round(dA1, 2),
-            'dA2': round(dA2, 2),
-            'dA3': round(dA3, 2),
-            'd12': round(d12, 2),
-            'd23': round(d23, 2),
-            'd13': round(d13, 2)
+            'avioes': [
+                {
+                    "hex": "e49763",
+                    "id": "TAM3628", 
+                    "lat": round(lat1, 5), 
+                    "lng": round(lng1, 5), 
+                    "altitude": int(alt1),
+                    "speed": int(speed1),
+                    "track": int(track1)
+                },
+                {
+                    "hex": "e49f5a",
+                    "id": "AZU6419", 
+                    "lat": round(lat2, 5), 
+                    "lng": round(lng2, 5), 
+                    "altitude": int(alt2),
+                    "speed": int(speed2),
+                    "track": int(track2)
+                }
+            ]
         }
     }
 
