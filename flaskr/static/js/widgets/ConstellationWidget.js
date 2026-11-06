@@ -24,7 +24,7 @@ class ConstellationWidget extends BaseWidget {
         this.hud.style.position = 'absolute';
         this.hud.style.top = '35px';
         this.hud.style.left = '10px';
-        this.hud.style.color = '#991052';
+        this.hud.style.color = '#ffffff';
         this.hud.style.fontSize = '11px';
         this.hud.style.fontFamily = 'monospace';
         this.hud.style.pointerEvents = 'none';
@@ -108,9 +108,90 @@ class ConstellationWidget extends BaseWidget {
         this.renderer.setSize(this.canvasContainer.clientWidth, this.canvasContainer.clientHeight);
         this.canvasContainer.appendChild(this.renderer.domElement);
 
-        this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+        this.controls = new OrbitControls(
+            this.camera,
+            this.renderer.domElement
+        );
+
         this.controls.enableDamping = true;
         this.controls.dampingFactor = 0.05;
+
+        this.controls.enablePan = true;
+        this.controls.screenSpacePanning = true;
+
+        // O zoom será controlado manualmente
+        this.controls.enableZoom = false;
+
+        const desativarAutoZoom = () => {
+            if (this.isAutoZoomEnabled) {
+                this.isAutoZoomEnabled = false;
+                
+                // Atualiza a interface do botão para mostrar que agora está manual
+                if (this.cameraToggleBtn) {
+                    this.cameraToggleBtn.innerText = 'VIEW: MANUAL';
+                    this.cameraToggleBtn.style.color = '#94a3b8'; // Cinza
+                    this.cameraToggleBtn.style.borderColor = '#94a3b8';
+                }
+            }
+        };
+
+        this.renderer.domElement.addEventListener('pointerdown', desativarAutoZoom);
+        this.renderer.domElement.addEventListener('wheel', (event) => {
+            event.preventDefault();
+
+            // Qualquer interação manual desativa o auto-zoom
+            if (this.isAutoZoomEnabled) {
+                this.isAutoZoomEnabled = false;
+
+                if (this.cameraToggleBtn) {
+                    this.cameraToggleBtn.innerText = 'VIEW: MANUAL';
+                    this.cameraToggleBtn.style.color = '#94a3b8';
+                    this.cameraToggleBtn.style.borderColor = '#94a3b8';
+                }
+            }
+
+            // Distância atual entre câmera e alvo
+            const distance = this.camera.position.distanceTo(
+                this.controls.target
+            );
+
+            // Direção da câmera em relação ao alvo
+            const direction = new THREE.Vector3()
+                .subVectors(this.camera.position, this.controls.target)
+                .normalize();
+
+            // Sensibilidade do zoom
+            const zoomSpeed = 0.1;
+
+            // Normaliza o delta da roda
+            const delta = Math.sign(event.deltaY);
+
+            let newDistance;
+
+            if (delta > 0) {
+                newDistance = distance * (1 + zoomSpeed);
+            } else {
+                newDistance = distance * (1 - zoomSpeed);
+            }
+
+            // Limites
+            const MIN_DISTANCE = 5;
+            const MAX_DISTANCE = 500;
+
+            newDistance = THREE.MathUtils.clamp(
+                newDistance,
+                MIN_DISTANCE,
+                MAX_DISTANCE
+            );
+
+            // Nova posição da câmera
+            this.camera.position.copy(
+                this.controls.target
+            ).add(
+                direction.multiplyScalar(newDistance)
+            );
+
+        }, { passive: false });
 
         this.controls.enablePan = true;
         this.controls.screenSpacePanning = true;
@@ -192,6 +273,14 @@ class ConstellationWidget extends BaseWidget {
             this.controls.update();
             this.updateLines();
             this.renderer.render(this.scene, this.camera);
+            if (this.sats) {
+                this.sats.forEach(sat => {
+                    if (sat.userData && sat.userData.targetPosition) {
+                        sat.position.lerp(sat.userData.targetPosition, 0.1); 
+                    }
+                });
+            }
+            
         };
         animate();
     }
@@ -240,7 +329,8 @@ class ConstellationWidget extends BaseWidget {
                 originalColor: index === 0 ? gsColor : satColor,
                 status: 'ON',
                 originalColor: isGS ? gsColor : satColor,
-                selectedColor: isGS ? gsSelectedColor : satSelectedColor
+                selectedColor: isGS ? gsSelectedColor : satSelectedColor,
+                targetPosition: new THREE.Vector3()
             };
 
             // Cria as arestas (bordas brancas)
@@ -395,43 +485,46 @@ class ConstellationWidget extends BaseWidget {
         const dA3 = Number(newData.dw1000_dA3 ?? newData.dA3) || 0.1;
 
         // 1. GS fixa na origem (0, 0, 0)
-        this.sats[0].position.set(0, 0, 0);
+        // A GS não se move, então podemos aplicar direto
+        this.sats[0].position.set(0, 0, 0); 
+        this.sats[0].userData.targetPosition.set(0, 0, 0);
+
+        // --- CALCULO DAS POSIÇÕES ATUAIS ---
+        let t = Date.now() / 10000;
         
-        // 2. Satélite 1 alinhado no eixo X positivo (referência do sistema)
-        this.sats[1].position.set(dA1, 0, 0); 
-        
-        // 3. Satélite 2 encontrado por trilateração entre GS (dA2) e Sat1 (d12)
-        // Usando a Lei dos Cossenos para achar o ângulo: dA2^2 = dA1^2 + d12^2 - 2*dA1*d12*cos(theta)
-        const cosTheta2 = (dA1**2 + dA2**2 - d12**2) / (2 * dA1 * dA2 || 1);
-        const clampedCos2 = Math.max(-1, Math.min(1, cosTheta2)); // Previne NaN por imprecisão
+        // 2. Satélite 1
+        const x1 = dA1 * Math.cos(t);
+        const y1 = dA1 * Math.sin(t);
+        this.sats[1].userData.targetPosition.set(x1, y1, 0); // Modificado
+
+        // 3. Satélite 2 
+        const cosTheta2 = (dA1 ** 2 + dA2 ** 2 - d12 ** 2) / (2 * dA1 * dA2 || 1);
+        const clampedCos2 = Math.max(-1, Math.min(1, cosTheta2));
         
         const x2 = dA2 * clampedCos2;
-        const y2 = Math.sqrt(Math.max(0, dA2**2 - x2**2));
-        this.sats[2].position.set(x2, y2, 0);
+        const y2 = Math.sqrt(Math.max(0, dA2 ** 2 - x2 ** 2));
+        this.sats[2].userData.targetPosition.set(x2, y2, 0); // Modificado
 
-        // 4. Satélite 3 encontrado por trilateração entre GS (dA3) e Sat1 (d13)
-        const cosTheta3 = (dA1**2 + dA3**2 - d13**2) / (2 * dA1 * dA3 || 1);
+        // 4. Satélite 3
+        const cosTheta3 = (dA1 ** 2 + dA3 ** 2 - d13 ** 2) / (2 * dA1 * dA3 || 1);
         const clampedCos3 = Math.max(-1, Math.min(1, cosTheta3));
         
         const x3 = dA3 * clampedCos3;
         
-        // Para o Y3, precisamos decidir se ele está "acima" ou "abaixo" do eixo X.
-        // Como temos a distância d23, podemos testar qual sinal de Y3 se aproxima mais da distância real.
-        let y3_positive = Math.sqrt(Math.max(0, dA3**2 - x3**2));
+        let y3_positive = Math.sqrt(Math.max(0, dA3 ** 2 - x3 ** 2));
         let y3_negative = -y3_positive;
         
-        const distTestPos = Math.sqrt((x2 - x3)**2 + (y2 - y3_positive)**2);
-        const distTestNeg = Math.sqrt((x2 - x3)**2 + (y2 - y3_negative)**2);
+        const distTestPos = Math.sqrt((x2 - x3) ** 2 + (y2 - y3_positive) ** 2);
+        const distTestNeg = Math.sqrt((x2 - x3) ** 2 + (y2 - y3_negative) ** 2);
         
         const y3 = (Math.abs(distTestPos - d23) < Math.abs(distTestNeg - d23)) ? y3_positive : y3_negative;
 
-        this.sats[3].position.set(x3, y3, 0);
+        this.sats[3].userData.targetPosition.set(x3, y3, 0); // Modificado
 
-        // Condiciona o ajuste da câmera ao estado do botão
         if (this.isAutoZoomEnabled) {
             this.adjustCameraZoom();
         }
-        
+
         this.hud.innerHTML = `
             GS-S1: ${dA1.toFixed(1)}m | S1-S2: ${d12.toFixed(1)}m<br>
             GS-S2: ${dA2.toFixed(1)}m | S2-S3: ${d23.toFixed(1)}m<br>
@@ -440,21 +533,56 @@ class ConstellationWidget extends BaseWidget {
     }
 
     adjustCameraZoom() {
+        if (!this.isAutoZoomEnabled) {
+            return;
+        }
+
         const box = new THREE.Box3().setFromObject(this.group);
+
+        if (box.isEmpty()) return;
+
         const center = new THREE.Vector3();
         box.getCenter(center);
-        
+
         const size = new THREE.Vector3();
         box.getSize(size);
-        const maxDim = Math.max(size.x, size.y, size.z, 20);
+
+        const maxDim = Math.max(size.x, size.y, size.z);
+
+        // Evita que valores muito pequenos produzam uma câmera
+        // absurdamente distante.
+        const effectiveDim = Math.max(maxDim, 5);
 
         const fov = this.camera.fov * (Math.PI / 180);
-        let targetDistance = Math.abs(maxDim / 2 / Math.tan(fov / 2)) * 1.8;
 
+        const targetDistance =
+            (effectiveDim / 2 / Math.tan(fov / 2)) * 1.8;
+
+        // Mantém a direção atual da câmera em relação ao alvo
+        let dir = new THREE.Vector3()
+            .subVectors(this.camera.position, this.controls.target);
+
+        if (dir.lengthSq() < 0.000001) {
+            dir.set(0, -1, 1);
+        }
+
+        dir.normalize();
+
+        // Mantém a câmera acima do plano
+        if (dir.z < 0.1) {
+            dir.z = 0.2;
+            dir.normalize();
+        }
+
+        // Atualiza o alvo
         this.controls.target.copy(center);
 
-        const dir = new THREE.Vector3().subVectors(this.camera.position, this.controls.target).normalize();
-        this.camera.position.copy(center).add(dir.multiplyScalar(Math.max(targetDistance, 50)));
+        // Posiciona a câmera apenas no auto-zoom
+        this.camera.position
+            .copy(center)
+            .add(dir.multiplyScalar(Math.max(targetDistance, 10)));
+
+        this.controls.update();
     }
 
     observeResize() {
