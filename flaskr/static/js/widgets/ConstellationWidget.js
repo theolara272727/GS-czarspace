@@ -478,48 +478,54 @@ class ConstellationWidget extends BaseWidget {
         if (!newData) return;
 
         const d12 = Number(newData.dw1000_d12 ?? newData.d12) || 0.1;
-        const d23 = Number(newData.dw1000_d23 ?? newData.d23) || 0.1;
+        const d23 = Number(newData.dw1000_d23 ?? newData.d23) || 0.1; // Ainda exibiremos no HUD
         const d13 = Number(newData.dw1000_d13 ?? newData.d13) || 0.1;
         const dA1 = Number(newData.dw1000_dA1 ?? newData.dA1) || 0.1;
         const dA2 = Number(newData.dw1000_dA2 ?? newData.dA2) || 0.1;
         const dA3 = Number(newData.dw1000_dA3 ?? newData.dA3) || 0.1;
 
         // 1. GS fixa na origem (0, 0, 0)
-        // A GS não se move, então podemos aplicar direto
         this.sats[0].position.set(0, 0, 0); 
         this.sats[0].userData.targetPosition.set(0, 0, 0);
 
-        // --- CALCULO DAS POSIÇÕES ATUAIS ---
-        let t = Date.now() / 10000;
+        // ========================================================
+        // 1º PASSO: CÁLCULO DA "FILA" ESTÁTICA
+        // ========================================================
         
-        // 2. Satélite 1
-        const x1 = dA1 * Math.cos(t);
-        const y1 = dA1 * Math.sin(t);
-        this.sats[1].userData.targetPosition.set(x1, y1, 0); // Modificado
+        // Satélite 1 (O Referencial no MEIO da fila)
+        const baseX1 = dA1;
+        const baseY1 = 0;
 
-        // 3. Satélite 2 
+        // Satélite 2 via trilateração (Forçado para um lado: Y Positivo)
         const cosTheta2 = (dA1 ** 2 + dA2 ** 2 - d12 ** 2) / (2 * dA1 * dA2 || 1);
         const clampedCos2 = Math.max(-1, Math.min(1, cosTheta2));
-        
-        const x2 = dA2 * clampedCos2;
-        const y2 = Math.sqrt(Math.max(0, dA2 ** 2 - x2 ** 2));
-        this.sats[2].userData.targetPosition.set(x2, y2, 0); // Modificado
+        const baseX2 = dA2 * clampedCos2;
+        // Raiz quadrada pura sempre retorna positivo
+        const baseY2 = Math.sqrt(Math.max(0, dA2 ** 2 - baseX2 ** 2)); 
 
-        // 4. Satélite 3
+        // Satélite 3 via trilateração (Forçado para o outro lado: Y Negativo)
         const cosTheta3 = (dA1 ** 2 + dA3 ** 2 - d13 ** 2) / (2 * dA1 * dA3 || 1);
         const clampedCos3 = Math.max(-1, Math.min(1, cosTheta3));
-        
-        const x3 = dA3 * clampedCos3;
-        
-        let y3_positive = Math.sqrt(Math.max(0, dA3 ** 2 - x3 ** 2));
-        let y3_negative = -y3_positive;
-        
-        const distTestPos = Math.sqrt((x2 - x3) ** 2 + (y2 - y3_positive) ** 2);
-        const distTestNeg = Math.sqrt((x2 - x3) ** 2 + (y2 - y3_negative) ** 2);
-        
-        const y3 = (Math.abs(distTestPos - d23) < Math.abs(distTestNeg - d23)) ? y3_positive : y3_negative;
+        const baseX3 = dA3 * clampedCos3;
+        // Invertemos o sinal para garantir que fique do lado oposto ao Satélite 2
+        const baseY3 = -Math.sqrt(Math.max(0, dA3 ** 2 - baseX3 ** 2)); 
 
-        this.sats[3].userData.targetPosition.set(x3, y3, 0); // Modificado
+        // ========================================================
+        // 2º PASSO: ROTAÇÃO GLOBAL CONTÍNUA
+        // ========================================================
+        
+        let t = Date.now() / 10000; // Velocidade da órbita
+        const cosT = Math.cos(t);
+        const sinT = Math.sin(t);
+
+        // Matriz de Rotação 2D
+        const rotX = (x, y) => x * cosT - y * sinT;
+        const rotY = (x, y) => x * sinT + y * cosT;
+
+        // Aplica as novas posições orbitais aos satélites
+        this.sats[1].userData.targetPosition.set(rotX(baseX1, baseY1), rotY(baseX1, baseY1), 0);
+        this.sats[2].userData.targetPosition.set(rotX(baseX2, baseY2), rotY(baseX2, baseY2), 0);
+        this.sats[3].userData.targetPosition.set(rotX(baseX3, baseY3), rotY(baseX3, baseY3), 0);
 
         if (this.isAutoZoomEnabled) {
             this.adjustCameraZoom();
