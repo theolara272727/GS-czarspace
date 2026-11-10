@@ -272,6 +272,7 @@ class ConstellationWidget extends BaseWidget {
             requestAnimationFrame(animate);
             this.controls.update();
             this.updateLines();
+            this.updateOrbitTrails();
             this.renderer.render(this.scene, this.camera);
             if (this.sats) {
                 this.sats.forEach(sat => {
@@ -290,8 +291,11 @@ class ConstellationWidget extends BaseWidget {
         this.scene.add(this.group);
 
         const satGeometry1u = new THREE.BoxGeometry(4, 4, 4);
+        satGeometry1u.translate(0, 0, 2);
         const satGeometry2u = new THREE.BoxGeometry(4, 4, 8);
+        satGeometry2u.translate(0, 0, 4);
         const groundStationGeometry = new THREE.BoxGeometry(10, 8, 4);
+        groundStationGeometry.translate(0, 0, 2);
 
         const satColor = 0xba0f81; // Rosa (Tailwind Pink-500)
         const gsColor = 0x267a12;  // Verde (Tailwind Green-500)
@@ -326,11 +330,14 @@ class ConstellationWidget extends BaseWidget {
                 id: `node-${index}`, 
                 name: nodeNames[index],
                 type: nodeTypes[index],
-                originalColor: index === 0 ? gsColor : satColor,
-                status: 'ON',
                 originalColor: isGS ? gsColor : satColor,
+                status: 'ON',
                 selectedColor: isGS ? gsSelectedColor : satSelectedColor,
-                targetPosition: new THREE.Vector3()
+                targetPosition: new THREE.Vector3(),
+                
+                // --- NOVO: Variáveis para a Órbita (Rastro) ---
+                trailPoints: [],
+                orbitLine: null
             };
 
             // Cria as arestas (bordas brancas)
@@ -339,10 +346,24 @@ class ConstellationWidget extends BaseWidget {
                 edges, 
                 new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 2 })
             );
-            outline.visible = false; // Esconde inicialmente
+            outline.visible = false; 
+            sat.add(outline); 
+            sat.userData.outline = outline; 
+
+            // --- NOVO: Criação da Linha de Órbita ---
+            const trailGeo = new THREE.BufferGeometry();
+            const trailMat = new THREE.LineBasicMaterial({ 
+                color: sat.userData.selectedColor, // A órbita terá a mesma cor clara do satélite selecionado
+                linewidth: 4,
+                transparent: true, 
+                opacity: 0.6 
+            });
+            const trailLine = new THREE.Line(trailGeo, trailMat);
+            trailLine.visible = false; // Começa invisível
+            trailLine.frustumCulled = false;
             
-            sat.add(outline); // Anexa a borda ao satélite
-            sat.userData.outline = outline; // Salva a referência
+            this.group.add(trailLine);
+            sat.userData.orbitLine = trailLine; // Salva a referência
 
             this.group.add(sat);
         });
@@ -428,11 +449,20 @@ class ConstellationWidget extends BaseWidget {
         const index = this.selectedNodes.indexOf(object);
 
         if (index > -1) {
+            // DESMARCAR: Remove da lista, restaura cor e APAGA a órbita
             this.selectedNodes.splice(index, 1);
             object.material.color.setHex(object.userData.originalColor);
+            
+            object.userData.orbitLine.visible = false;
+            object.userData.trailPoints = [];
+            object.userData.orbitLine.geometry.setFromPoints([]);
         } else {
+            // SELECIONAR: Adiciona na lista, muda cor e INICIA a órbita
             this.selectedNodes.push(object);
-            object.material.color.setHex(object.userData.selectedColor); // Muda cor ao clicar
+            object.material.color.setHex(object.userData.selectedColor);
+            
+            object.userData.orbitLine.visible = true;
+            object.userData.trailPoints = [object.position.clone()]; // Inicia do ponto atual
         }
 
         this.rebuildLines();
@@ -473,6 +503,29 @@ class ConstellationWidget extends BaseWidget {
         });
     }
 
+    updateOrbitTrails() {
+        this.selectedNodes.forEach(sat => {
+            const points = sat.userData.trailPoints;
+            if (points.length === 0) return;
+            
+            const lastPoint = points[points.length - 1];
+            
+            // Só adiciona um novo ponto se o satélite andou mais de 0.5 unidades
+            // Isso cria curvas suaves sem sobrecarregar a memória
+            if (lastPoint.distanceTo(sat.position) > 0.5) { 
+                points.push(sat.position.clone());
+                
+                // Limita o tamanho do rastro (ex: últimos 1000 pontos) para não pesar o navegador
+                if (points.length > 1000) {
+                    points.shift();
+                }
+                
+                // Atualiza a geometria da linha com os novos pontos
+                sat.userData.orbitLine.geometry.setFromPoints(points);
+            }
+        });
+    }
+
     update(newData) {
         super.update(newData);
         if (!newData) return;
@@ -488,10 +541,6 @@ class ConstellationWidget extends BaseWidget {
         this.sats[0].position.set(0, 0, 0); 
         this.sats[0].userData.targetPosition.set(0, 0, 0);
 
-        // ========================================================
-        // 1º PASSO: CÁLCULO DA "FILA" ESTÁTICA
-        // ========================================================
-        
         // Satélite 1 (O Referencial no MEIO da fila)
         const baseX1 = dA1;
         const baseY1 = 0;
@@ -509,10 +558,6 @@ class ConstellationWidget extends BaseWidget {
         const baseX3 = dA3 * clampedCos3;
         // Invertemos o sinal para garantir que fique do lado oposto ao Satélite 2
         const baseY3 = -Math.sqrt(Math.max(0, dA3 ** 2 - baseX3 ** 2)); 
-
-        // ========================================================
-        // 2º PASSO: ROTAÇÃO GLOBAL CONTÍNUA
-        // ========================================================
         
         let t = Date.now() / 10000; // Velocidade da órbita
         const cosT = Math.cos(t);
