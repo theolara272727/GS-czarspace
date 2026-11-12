@@ -2,6 +2,7 @@ import BaseWidget from './widgets/BaseWidget.js';
 import terminalWidget from './widgets/terminalWidget.js';
 import chartWidget from './widgets/ChartWidget.js';
 import MapWidget from './widgets/MapWidget.js';
+import ConstellationWidget from './widgets/ConstellationWidget.js';
 import { createWidgetFromSpec as restoreWidgetFromSpec } from './widgets/WidgetRegistry.js';
 
 const socket = io();
@@ -613,6 +614,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             widget.render();
         });
     }
+    
+    const createConstellationBtn = document.getElementById('constellationButton');
+    if (createConstellationBtn) {
+        createConstellationBtn.addEventListener('click', () => {
+            const widget = registerWidget(new ConstellationWidget('Constelação 3D', 'workspace', current_data));
+            widget.render();
+        });
+    }
+
     if (saveModeButton) {
         saveModeButton.addEventListener('click', async () => {
             const name = await askInput('Nome do modo:');
