@@ -14,6 +14,7 @@ class chartWidget extends BaseWidget {
         this.knownKeys = new Set();
         this.lineColor = '#d03379';
         this.paused = false;
+        this.functions = [];
 
         this.content.style.flex = '1';
         this.content.style.minHeight = '0';
@@ -50,7 +51,12 @@ class chartWidget extends BaseWidget {
             type: this.getKind(),
             selectedKey: this.selectedKey,
             lineColor: this.lineColor,
-            paused: this.paused
+            paused: this.paused,
+            // Não exponha a referência interna: este objeto é gravado em instance/config.json.
+            functions: this.functions.map((item, index) => ({
+                expression: item.expression,
+                color: item.color || this.getFunctionColor(index)
+            }))
         };
     }
 
@@ -73,6 +79,18 @@ class chartWidget extends BaseWidget {
             if (this.select) {
                 this.select.value = state.selectedKey;
             }
+        }
+        const savedFunctions = Array.isArray(state.functions)
+            ? state.functions
+            : state.customFunctions; // compatibilidade com a primeira versão da funcionalidade
+        if (Array.isArray(savedFunctions)) {
+            this.functions = savedFunctions
+                .filter(item => item && item.expression)
+                .map((item, index) => ({
+                    expression: item.expression,
+                    color: item.color || this.getFunctionColor(index)
+                }));
+            this.renderFunctions();
         }
     }
 
@@ -155,6 +173,69 @@ class chartWidget extends BaseWidget {
         this.configBar.appendChild(controls);
         this.configBar.appendChild(this.readout);
 
+        this.settingsPanel = document.createElement('details');
+        this.settingsPanel.style.flexShrink = '0';
+        this.settingsPanel.style.border = '1px solid #374151';
+        this.settingsPanel.style.borderRadius = '4px';
+        this.settingsPanel.style.padding = '4px 6px';
+
+        const settingsTitle = document.createElement('summary');
+        settingsTitle.innerText = 'Configurações';
+        settingsTitle.style.color = '#e0e6ed';
+        settingsTitle.style.cursor = 'pointer';
+        settingsTitle.style.fontSize = '0.75rem';
+        settingsTitle.style.userSelect = 'none';
+
+        this.functionBar = document.createElement('div');
+        this.functionBar.style.display = 'flex';
+        this.functionBar.style.gap = '6px';
+        this.functionBar.style.alignItems = 'center';
+        this.functionBar.style.flexWrap = 'wrap';
+        this.functionBar.style.flexShrink = '0';
+        this.functionBar.style.paddingTop = '6px';
+
+        this.functionInput = document.createElement('input');
+        this.functionInput.type = 'text';
+        this.functionInput.placeholder = '';
+        this.functionInput.title = '';
+        this.functionInput.style.backgroundColor = '#1f2937';
+        this.functionInput.style.color = '#e0e6ed';
+        this.functionInput.style.border = '1px solid #374151';
+        this.functionInput.style.borderRadius = '4px';
+        this.functionInput.style.padding = '4px 6px';
+        this.functionInput.style.fontFamily = 'monospace';
+        this.functionInput.style.fontSize = '0.75rem';
+        this.functionInput.style.minWidth = '200px';
+        this.functionInput.style.flex = '1';
+        this.functionInput.addEventListener('mousedown', (e) => e.stopPropagation());
+        this.functionInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') this.addFunction();
+        });
+
+        this.addFunctionBtn = this.makeButton('+ Função');
+        this.addFunctionBtn.title = 'Adicionar função ao gráfico';
+        this.addFunctionBtn.addEventListener('click', () => this.addFunction());
+
+        this.functionsList = document.createElement('div');
+        this.functionsList.style.display = 'flex';
+        this.functionsList.style.gap = '4px';
+        this.functionsList.style.flexWrap = 'wrap';
+        this.functionsList.style.width = '100%';
+
+        this.availableDataHint = document.createElement('span');
+        this.availableDataHint.style.width = '100%';
+        this.availableDataHint.style.color = '#9ca3af';
+        this.availableDataHint.style.fontSize = '0.7rem';
+        this.availableDataHint.style.fontFamily = 'monospace';
+        this.availableDataHint.innerText = '';
+
+        this.functionBar.appendChild(this.functionInput);
+        this.functionBar.appendChild(this.addFunctionBtn);
+        this.functionBar.appendChild(this.availableDataHint);
+        this.functionBar.appendChild(this.functionsList);
+        this.settingsPanel.appendChild(settingsTitle);
+        this.settingsPanel.appendChild(this.functionBar);
+
         this.canvasWrapper = document.createElement('div');
         this.canvasWrapper.style.position = 'relative';
         this.canvasWrapper.style.flex = '1';
@@ -168,7 +249,133 @@ class chartWidget extends BaseWidget {
         this.canvasWrapper.appendChild(this.canvas);
 
         this.content.appendChild(this.configBar);
+        this.content.appendChild(this.settingsPanel);
         this.content.appendChild(this.canvasWrapper);
+    }
+
+    addFunction() {
+        const expression = this.functionInput.value.trim();
+        if (!expression) return;
+
+        try {
+            this.compileFunction(expression, this.getLatestValues());
+        } catch (error) {
+            this.functionInput.title = `Função inválida: ${error.message}`;
+            this.functionInput.style.borderColor = '#ef4444';
+            return;
+        }
+
+        this.functions.push({
+            expression,
+            color: this.getFunctionColor(this.functions.length)
+        });
+        this.functionInput.value = '';
+        this.functionInput.title = '';
+        this.functionInput.style.borderColor = '#374151';
+        this.renderFunctions();
+        this.draw();
+    }
+
+    removeFunction(index) {
+        this.functions.splice(index, 1);
+        this.renderFunctions();
+        this.draw();
+    }
+
+    renderFunctions() {
+        if (!this.functionsList) return;
+        this.functionsList.innerHTML = '';
+
+        this.functions.forEach((item, index) => {
+            const tag = document.createElement('span');
+            tag.style.display = 'inline-flex';
+            tag.style.alignItems = 'center';
+            tag.style.gap = '5px';
+            tag.style.padding = '2px 5px';
+            tag.style.backgroundColor = '#1f2937';
+            tag.style.border = `1px solid ${item.color}`;
+            tag.style.borderRadius = '4px';
+            tag.style.color = '#e0e6ed';
+            tag.style.fontFamily = 'monospace';
+            tag.style.fontSize = '0.7rem';
+
+            const text = document.createElement('span');
+            text.innerText = `f = ${item.expression}`;
+
+            const color = document.createElement('input');
+            color.type = 'color';
+            color.value = item.color || this.getFunctionColor(index);
+            color.title = 'Cor da função';
+            color.style.width = '22px';
+            color.style.height = '18px';
+            color.style.padding = '0';
+            color.style.border = '0';
+            color.style.background = 'transparent';
+            color.style.cursor = 'pointer';
+            color.addEventListener('mousedown', (event) => event.stopPropagation());
+            color.addEventListener('input', () => {
+                item.color = color.value;
+                tag.style.borderColor = item.color;
+                this.draw();
+            });
+            const remove = document.createElement('button');
+            remove.innerText = '×';
+            remove.title = 'Remover função';
+            remove.style.border = '0';
+            remove.style.padding = '0 2px';
+            remove.style.background = 'transparent';
+            remove.style.color = '#e0e6ed';
+            remove.style.cursor = 'pointer';
+            remove.addEventListener('click', () => this.removeFunction(index));
+
+            tag.appendChild(text);
+            tag.appendChild(color);
+            tag.appendChild(remove);
+            this.functionsList.appendChild(tag);
+        });
+    }
+
+    getFunctionColor(index) {
+        const colors = ['#60a5fa', '#34d399', '#fbbf24', '#a78bfa', '#fb7185', '#22d3ee'];
+        return colors[index % colors.length];
+    }
+
+    getFormulaKeys(values = {}) {
+        const configuredKeys = typeof window !== 'undefined' && window.currentMode
+            ? (window.currentMode.dataTypes || [])
+            : [];
+        return [...new Set([...configuredKeys, ...this.knownKeys, ...Object.keys(values)])]
+            .filter(key => /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key))
+            .filter(key => key !== 'x' && key !== 'dados');
+    }
+
+    getLatestValues() {
+        const values = {};
+        Object.entries(this.buffers).forEach(([key, buffer]) => {
+            const lastPoint = buffer[buffer.length - 1];
+            if (lastPoint) values[key] = lastPoint.value;
+        });
+        return values;
+    }
+
+    compileFunction(expression, values = {}) {
+        const keys = this.getFormulaKeys(values);
+        return {
+            keys,
+            fn: new Function('x', 'dados', ...keys, `return (${expression});`)
+        };
+    }
+
+    evaluateFunction(expression, values) {
+        try {
+            const safeValues = values || {};
+            const { keys, fn } = this.compileFunction(expression, safeValues);
+            const x = safeValues[this.selectedKey];
+            const result = fn(x, safeValues, ...keys.map(key => safeValues[key]));
+            return Number.isFinite(result) ? result : null;
+        } catch (_) {
+            return null;
+        }
     }
 
     makeButton(label) {
@@ -192,7 +399,7 @@ class chartWidget extends BaseWidget {
         const noDataPlugin = {
             id: 'noDataText',
             afterDraw: (chart) => {
-                if (chart.data.datasets[0].data.length === 0) {
+                if (!chart.data.datasets.length || chart.data.datasets[0].data.length === 0) {
                     const ctx = chart.ctx;
                     const width = chart.width;
                     const height = chart.height;
@@ -258,7 +465,14 @@ class chartWidget extends BaseWidget {
                     }
                 },
                 plugins: {
-                    legend: { display: false },
+                    legend: {
+                        display: true,
+                        labels: {
+                            color: '#9ca3af',
+                            font: { family: 'monospace', size: 10 },
+                            boxWidth: 12
+                        }
+                    },
                     tooltip: {
                         enabled: true,             
                         intersect: false,          
@@ -276,7 +490,8 @@ class chartWidget extends BaseWidget {
                                 return 'Tempo: ' + context[0].label;
                             },
                             label: function(context) {
-                                return 'Valor: ' + context.parsed.y.toFixed(2);
+                                const value = context.parsed.y;
+                                return context.dataset.label + ': ' + (Number.isFinite(value) ? value.toFixed(2) : '--');
                             }
                         }
                     }
@@ -339,6 +554,12 @@ refreshKeys(payload) {
                 this.select.appendChild(opt);
             }
         });
+
+        if (this.availableDataHint) {
+            this.availableDataHint.innerText = validKeys.length
+                ? `Dados disponíveis: ${validKeys.join(', ')}. `
+                : 'Dados disponíveis: aguardando dados...';
+        }
       
         if (this.selectedKey && !validKeys.includes(this.selectedKey)) {
             this.selectedKey = validKeys.length > 0 ? validKeys[0] : null;
@@ -367,16 +588,18 @@ refreshKeys(payload) {
             dataSource = payload.values !== undefined ? payload.values : payload;
         }
 
-        for (const [key, value] of Object.entries(dataSource)) {
-            if (key === 'timestamp' || key === 'values') continue; 
+        const values = Object.fromEntries(
+            Object.entries(dataSource)
+                .filter(([key, value]) => key !== 'timestamp' && key !== 'values' && Number.isFinite(parseFloat(value)))
+                .map(([key, value]) => [key, parseFloat(value)])
+        );
 
-            const num = parseFloat(value);
-            if (!Number.isFinite(num)) continue;
-            
+        for (const [key, num] of Object.entries(values)) {
             if (!this.buffers[key]) this.buffers[key] = [];
             const buf = this.buffers[key];
             
-            buf.push({ value: num, time: exactTimestamp });
+            // Cada ponto guarda o pacote inteiro: uma fórmula pode usar qualquer dado do modo.
+            buf.push({ value: num, time: exactTimestamp, values });
 
             if (buf.length > this.maxPoints) buf.shift();
         }
@@ -397,18 +620,40 @@ refreshKeys(payload) {
         if (!buf || buf.length === 0) {
             this.readout.innerText = '--';
             this.chart.data.labels = [];
-            this.chart.data.datasets[0].data = [];
+            this.chart.data.datasets = [{
+                label: this.selectedKey || 'Dado',
+                data: [],
+                borderColor: this.lineColor,
+                backgroundColor: this.lineColor,
+                pointBackgroundColor: this.lineColor
+            }];
             this.chart.update();
             return;
         }
 
-        this.chart.data.datasets[0].borderColor = this.lineColor;
-        this.chart.data.datasets[0].backgroundColor = this.lineColor;
-        this.chart.data.datasets[0].pointBackgroundColor = this.lineColor;
-
         this.chart.data.labels = buf.map(item => this.formatChartTime(item.time));
-        
-        this.chart.data.datasets[0].data = buf.map(item => item.value);
+        this.chart.data.datasets = [
+            {
+                label: this.selectedKey || 'Dado',
+                data: buf.map(item => item.value),
+                borderColor: this.lineColor,
+                backgroundColor: this.lineColor,
+                borderWidth: 2,
+                pointBackgroundColor: this.lineColor,
+                tension: 0
+            },
+            ...this.functions.map(item => ({
+                label: `f = ${item.expression}`,
+                data: buf.map(point => this.evaluateFunction(item.expression, point.values || {
+                    [this.selectedKey]: point.value
+                })),
+                borderColor: item.color,
+                backgroundColor: item.color,
+                borderWidth: 2,
+                pointRadius: 0,
+                tension: 0
+            }))
+        ];
 
         this.chart.update();
 

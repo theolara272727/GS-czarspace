@@ -11,11 +11,14 @@
 </head>
 <body>
     <header class="app-header">
+        <img src="{{ url_for('static', filename='img/czar.png') }}" alt="Cezar" width="50" height="50">
         <div class="station-brand">
-            <div class="station-mark" aria-hidden="true"><span></span></div>
-            <div>
-                <span class="station-kicker">CZARSPACE // GROUND SEGMENT</span>
-                <h1>Flight Control</h1>
+            
+            <div class="station-title">
+                <h1>
+                    <span class="station-title-name">CZARSPACE</span>
+                    <span class="station-title-context">GROUND STATION</span>
+                </h1>
             </div>
         </div>
 
@@ -28,9 +31,13 @@
                 <span class="status-label">LAST PACKET</span>
                 <span class="status-value" id="last-packet-time">--:--:--</span>
             </div>
-            <div class="status-block utc-block">
-                <span class="status-label">MISSION TIME · UTC</span>
-                <span class="status-value" id="utc-clock">--:--:--</span>
+            <div class="status-block">
+                <span class="status-label">DATA RATE</span>
+                <span class="status-value" id="data-rate">0.0 pkt/s</span>
+            </div>
+            <div class="status-block local-clock-block">
+                <span class="status-label">MISSION TIME · LOCAL</span>
+                <span class="status-value" id="local-clock">--:--:--</span>
             </div>
         </div>
 
@@ -62,8 +69,11 @@
                     <div class="button" id="mapButton">Radar de Voo</div>
                 </div>
             </div>
-            <button class="action-btn icon-action" id="saveModeButton" type="button" title="Salvar configuração">
+            <button class="action-btn icon-action" id="saveModeButton" type="button" title="Atualizar modo atual" aria-label="Atualizar modo atual">
                 <svg width="17" height="17" aria-hidden="true"><use href="#save-svg"></use></svg>
+            </button>
+            <button class="action-btn icon-action" id="createModeButton" type="button" title="Adicionar novo modo" aria-label="Adicionar novo modo">
+                <span aria-hidden="true" style="font-size: 1.7rem; line-height: 1; font-weight: 300;">+</span>
             </button>
             <button class="action-btn icon-action" id="settingsButton" type="button" title="Configurar modos">
                 <svg width="17" height="17" aria-hidden="true"><use href="#config-svg"></use></svg>
@@ -115,7 +125,6 @@
             <span class="rail-tag">OPS</span>
             <span class="rail-node active" title="Telemetria">TLM</span>
             <span class="rail-node" title="Comandos">CMD</span>
-            <span class="rail-node" title="Eventos">EVT</span>
             <span class="rail-line"></span>
             <span class="rail-foot">GS<br>01</span>
         </aside>

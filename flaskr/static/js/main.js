@@ -13,6 +13,9 @@ let viewMode = "live";
 let historicalRequestId = 0;
 let historicalTimer = null;
 let historicalPlaybackToken = 0;
+const dataRateWindowMs = 5000;
+const receivedPacketTimes = [];
+let dataRateStartedAt = Date.now();
 
 function setLinkStatus(connected) {
     const status = document.getElementById('link-status');
@@ -21,23 +24,57 @@ function setLinkStatus(connected) {
     status.innerHTML = `<i class="status-dot"></i> ${connected ? 'NOMINAL' : 'OFFLINE'}`;
 }
 
-function updateUtcClock() {
-    const clock = document.getElementById('utc-clock');
-    if (clock) clock.textContent = new Date().toISOString().slice(11, 19);
+function formatLocalTime(date) {
+    return date.toLocaleTimeString('pt-BR', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    });
+}
+
+function updateLocalClock() {
+    const clock = document.getElementById('local-clock');
+    if (clock) clock.textContent = formatLocalTime(new Date());
+}
+
+function updateDataRate() {
+    const now = Date.now();
+    const cutoff = now - dataRateWindowMs;
+    while (receivedPacketTimes[0] < cutoff) receivedPacketTimes.shift();
+
+    const sampledDurationMs = Math.min(
+        dataRateWindowMs,
+        Math.max(1000, now - dataRateStartedAt)
+    );
+    const packetsPerSecond = receivedPacketTimes.length / (sampledDurationMs / 1000);
+    const rate = document.getElementById('data-rate');
+    if (rate) rate.textContent = `${packetsPerSecond.toFixed(1)} pkt/s`;
 }
 
 socket.on('connection_status', (data) => setLinkStatus(data?.connected === true));
-socket.on('connect', () => setLinkStatus(true));
-socket.on('disconnect', () => setLinkStatus(false));
+socket.on('connect', () => {
+    dataRateStartedAt = Date.now();
+    receivedPacketTimes.length = 0;
+    setLinkStatus(true);
+    updateDataRate();
+});
+socket.on('disconnect', () => {
+    receivedPacketTimes.length = 0;
+    setLinkStatus(false);
+    updateDataRate();
+});
 
 socket.on('new_data', (data) => {
     if (!data || typeof data.values !== 'object' || Array.isArray(data.values)) return;
+    receivedPacketTimes.push(Date.now());
+    updateDataRate();
     const packetTime = document.getElementById('last-packet-time');
     if (packetTime) {
         const received = new Date(data.receivedTimestamp || Date.now());
         packetTime.textContent = Number.isNaN(received.getTime())
             ? '--:--:--'
-            : received.toISOString().slice(11, 19);
+            : formatLocalTime(received);
     }
     if (currentMode && currentMode.code !== data.modeCode) return;
 
@@ -554,12 +591,17 @@ function askInput(title) {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
-    updateUtcClock();
-    window.setInterval(updateUtcClock, 1000);
+    updateLocalClock();
+    updateDataRate();
+    window.setInterval(() => {
+        updateLocalClock();
+        updateDataRate();
+    }, 1000);
     const settingsButton = document.getElementById('settingsButton');
     const settingsMenu = document.getElementById('settingsMenu');
     const closeSettingsBtn = document.getElementById('closeSettingsBtn');
     const saveModeButton = document.getElementById('saveModeButton');
+    const createModeButton = document.getElementById('createModeButton');
 
     if (settingsButton) {
         settingsButton.addEventListener('click', () => {
@@ -615,28 +657,44 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     if (saveModeButton) {
         saveModeButton.addEventListener('click', async () => {
-            const name = await askInput('Nome do modo:');
-            if (!name) {
-                alert('Informe um nome para o modo.');
+            if (!currentMode) {
+                alert('Selecione um modo antes de atualizá-lo.');
                 return;
             }
 
-            const existingMode = savedModes.find((mode) => mode.name === name);
-            if (existingMode) {
-                if (!confirm(`O modo "${name}" já existe. Atualizar com a disposição atual?`)) {
-                    return;
-                }
-                existingMode.widgets = structuredClone(getCurrentModeSpec(name).widgets);            } 
-            else {
-                const code = await askInput('Código hexadecimal do modo (ex.: 0x01):');
-                if (!code) {
-                    alert('Informe o código hexadecimal do modo.');
-                    return;
-                }
-                const newMode = getCurrentModeSpec(name);
-                newMode.code = code;
-                savedModes.push(newMode);
+            const modeIndex = savedModes.indexOf(currentMode);
+            if (modeIndex === -1) {
+                alert('Não foi possível localizar o modo atual.');
+                return;
             }
+
+            const updatedMode = getCurrentModeSpec(currentMode.name);
+            updatedMode.code = currentMode.code;
+            updatedMode.dataTypes = [...(currentMode.dataTypes || [])];
+            Object.assign(savedModes[modeIndex], structuredClone(updatedMode));
+            currentMode = savedModes[modeIndex];
+            window.currentMode = currentMode;
+
+            if (await saveModesToServer()) renderModesUI();
+        });
+    }
+
+    if (createModeButton) {
+        createModeButton.addEventListener('click', async () => {
+            const name = await askInput('Nome do novo modo:');
+            if (!name) return;
+
+            if (savedModes.some((mode) => mode.name === name)) {
+                alert(`Já existe um modo chamado "${name}".`);
+                return;
+            }
+
+            const code = await askInput('Código hexadecimal do modo (ex.: 0x01):');
+            if (!code) return;
+
+            const newMode = getCurrentModeSpec(name);
+            newMode.code = code;
+            savedModes.push(newMode);
 
             if (await saveModesToServer()) renderModesUI();
         });

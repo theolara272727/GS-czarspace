@@ -36,3 +36,7 @@ possível enviar JSON:
 O código é configurado no menu de cada modo. O backend usa esse código para mapear
 os valores, armazena as timestamps de coleta e recebimento e envia ao navegador a
 telemetria já nomeada.
+
+O histórico de telemetria é salvo em `instance/historico_voo.csv`. Na primeira
+execução desta versão, os dados de um eventual `instance/historico_voo.db` antigo
+são copiados automaticamente para o CSV.
