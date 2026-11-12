@@ -301,17 +301,126 @@ def parse_serial_message(raw_message, modes):
     }
 
 
-def read_serial(app):
-    with app.app_context():
-        with serial_lock:
-            connection = _get_serial_connection()
-            raw_message = connection.readline()
-    if not raw_message:
-        return None
-    with config_lock:
-        modes = _validate_modes(_load_modes(app))
-    return parse_serial_message(raw_message, modes)
+# def read_serial(app):
+#     with app.app_context():
+#         with serial_lock:
+#             connection = _get_serial_connection()
+#             raw_message = connection.readline()
+#     if not raw_message:
+#         return None
+#     with config_lock:
+#         modes = _validate_modes(_load_modes(app))
+#     return parse_serial_message(raw_message, modes)
+# tempo_simulacao = 0.0
 
+# def read_serial(app):
+#     global tempo_simulacao
+    
+#     # Pausa de 0.5 segundos para simular a taxa de amostragem
+#     time.sleep(0.5)
+#     tempo_simulacao += 0.05 
+    
+#     t = tempo_simulacao
+
+#     # Simulação dos Aviões
+#     lat1 = -19.9167 + 0.05 * math.cos(t)
+#     lng1 = -43.9345 + 0.05 * math.sin(t)
+#     alt1 = 15000 + 3000 * math.sin(t * 0.5)
+#     speed1 = 492 + 20 * math.sin(t)
+#     track1 = (math.atan2(math.cos(t), -math.sin(t)) * (180 / math.pi) + 360) % 360
+    
+#     lat2 = -19.9167 + 0.02 * math.cos(t * 1.5 + 1.2)
+#     lng2 = -43.9345 + 0.02 * math.sin(t * 1.5 + 1.2)
+#     alt2 = 8000 + 1000 * math.cos(t * 0.8)
+#     speed2 = 352 + 15 * math.cos(t * 1.5)
+#     track2 = (math.atan2(math.cos(t * 1.5 + 1.2), -math.sin(t * 1.5 + 1.2)) * (180 / math.pi) + 360) % 360
+
+#     from datetime import datetime, timezone
+#     now = datetime.now(timezone.utc).isoformat()
+
+#     # Estrutura com os novos campos hex, speed e track
+#     return {
+#         'timestamp': now,
+#         'receivedTimestamp': now,
+#         'modeCode': '0x01', # ATENÇÃO: Verifique o código selecionado no seu painel
+#         'modeName': 'Simulacao Map',
+#         'values': {
+#             'avioes': [
+#                 {
+#                     "hex": "e49763",
+#                     "id": "TAM3628", 
+#                     "lat": round(lat1, 5), 
+#                     "lng": round(lng1, 5), 
+#                     "altitude": int(alt1),
+#                     "speed": int(speed1),
+#                     "track": int(track1)
+#                 },
+#                 {
+#                     "hex": "e49f5a",
+#                     "id": "AZU6419", 
+#                     "lat": round(lat2, 5), 
+#                     "lng": round(lng2, 5), 
+#                     "altitude": int(alt2),
+#                     "speed": int(speed2),
+#                     "track": int(track2)
+#                 }
+#             ]
+#         }
+#     }
+
+tempo_simulacao = 0.0
+
+def read_serial(app):
+    global tempo_simulacao
+    
+    # Pausa para simular a taxa de amostragem do DW1000
+    time.sleep(0.5)
+    tempo_simulacao += 0.05
+    
+    t = tempo_simulacao
+
+    # Simulação das "Órbitas" apenas no plano X, Y
+    # A GS está em (0,0). Os satélites orbitam ao redor dela.
+    
+    # Satélite 1 (Mais próximo/Rápido)
+    x1 = 100 * math.cos(t)
+    y1 = 100 * math.sin(t)
+
+    # Satélite 2 (Órbita média)
+    x2 = 100 * math.cos(t * 0.8 + 1.2)
+    y2 = 100 * math.sin(t * 0.8 + 1.2)
+
+    # Satélite 3 (Órbita elíptica)
+    x3 = 100 * math.cos(t * 0.5 + 2.5)
+    y3 = 100 * math.sin(t * 0.5 + 2.5)
+
+    # Cálculo das distâncias reais baseadas nas posições 2D (Evita triângulos impossíveis)
+    # GS fixa em (0, 0)
+    dA1 = math.sqrt(x1**2 + y1**2)
+    dA2 = math.sqrt(x2**2 + y2**2)
+    dA3 = math.sqrt(x3**2 + y3**2)
+
+    d12 = math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+    d23 = math.sqrt((x3 - x2)**2 + (y3 - y2)**2)
+    d13 = math.sqrt((x3 - x1)**2 + (y3 - y1)**2)
+
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+
+    return {
+        'timestamp': now,
+        'receivedTimestamp': now,
+        'modeCode': '0x01', # Verifique o modo hexadecimal no seu painel
+        'modeName': 'Simulacao Constelacao',
+        'values': {
+            'dA1': round(dA1, 2),
+            'dA2': round(dA2, 2),
+            'dA3': round(dA3, 2),
+            'd12': round(d12, 2),
+            'd23': round(d23, 2),
+            'd13': round(d13, 2)
+        }
+    }
 
 def emit_data(app):
     while True:
