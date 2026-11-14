@@ -320,8 +320,9 @@ class ConstellationWidget extends BaseWidget {
         ];
 
         // Mapeamento de dados e Criação das Bordas
-        const nodeNames = ['Estação Solo', 'Lelia', 'Beatriz', 'Carolina'];
-        const nodeTypes = ['Ground Station', 'CubeSat-2U', 'CubeSat-1U', 'CubeSat-1U'];
+        // S1 = Gabriella (referência, centro), S2 = Beatriz (atrás), S3 = Carolina (à frente)
+        const nodeNames = ['Estação Solo', 'Gabriella', 'Beatriz', 'Carolina'];
+        const nodeTypes = ['Ground Station', 'CubeSat-2U · referência', 'CubeSat-1U', 'CubeSat-1U'];
 
         this.sats.forEach((sat, index) => {
             const isGS = index === 0;
@@ -331,6 +332,9 @@ class ConstellationWidget extends BaseWidget {
                 name: nodeNames[index],
                 type: nodeTypes[index],
                 originalColor: isGS ? gsColor : satColor,
+                alertColor: 0xef4444,
+                alert: false,
+                missionInfo: '',
                 status: 'ON',
                 selectedColor: isGS ? gsSelectedColor : satSelectedColor,
                 targetPosition: new THREE.Vector3(),
@@ -409,6 +413,7 @@ class ConstellationWidget extends BaseWidget {
                         <strong style="color: #af2468;">${object.userData.name}</strong><br>
                         Tipo: ${object.userData.type}<br>
                         Link: ${object.userData.status}
+                        ${object.userData.missionInfo ? `<br>${object.userData.missionInfo}` : ''}
                     `;
                 }
 
@@ -451,7 +456,7 @@ class ConstellationWidget extends BaseWidget {
         if (index > -1) {
             // DESMARCAR: Remove da lista, restaura cor e APAGA a órbita
             this.selectedNodes.splice(index, 1);
-            object.material.color.setHex(object.userData.originalColor);
+            this.applyNodeColor(object);
             
             object.userData.orbitLine.visible = false;
             object.userData.trailPoints = [];
@@ -459,7 +464,7 @@ class ConstellationWidget extends BaseWidget {
         } else {
             // SELECIONAR: Adiciona na lista, muda cor e INICIA a órbita
             this.selectedNodes.push(object);
-            object.material.color.setHex(object.userData.selectedColor);
+            this.applyNodeColor(object);
             
             object.userData.orbitLine.visible = true;
             object.userData.trailPoints = [object.position.clone()]; // Inicia do ponto atual
@@ -529,6 +534,10 @@ class ConstellationWidget extends BaseWidget {
     update(newData) {
         super.update(newData);
         if (!newData) return;
+        if (!['dA1', 'dA2', 'dA3', 'd12', 'd13', 'd23'].some((key) => newData[key] != null)) {
+            this.hud.innerHTML = 'Aguardando medidas UWB...';
+            return;
+        }
 
         const d12 = Number(newData.dw1000_d12 ?? newData.d12) || 0.1;
         const d23 = Number(newData.dw1000_d23 ?? newData.d23) || 0.1; // Ainda exibiremos no HUD
@@ -567,20 +576,58 @@ class ConstellationWidget extends BaseWidget {
         const rotX = (x, y) => x * cosT - y * sinT;
         const rotY = (x, y) => x * sinT + y * cosT;
 
+        // As medidas da bancada são de ~1 m, menores que os próprios cubos (4 unidades).
+        // Normaliza a cena para que o nó mais distante da GS fique a DISPLAY_RADIUS unidades;
+        // as distâncias reais continuam no HUD.
+        const DISPLAY_RADIUS = 40;
+        const maxRadius = Math.max(dA1, dA2, dA3, 1e-6);
+        const k = DISPLAY_RADIUS / maxRadius;
+
         // Aplica as novas posições orbitais aos satélites
-        this.sats[1].userData.targetPosition.set(rotX(baseX1, baseY1), rotY(baseX1, baseY1), 0);
-        this.sats[2].userData.targetPosition.set(rotX(baseX2, baseY2), rotY(baseX2, baseY2), 0);
-        this.sats[3].userData.targetPosition.set(rotX(baseX3, baseY3), rotY(baseX3, baseY3), 0);
+        this.sats[1].userData.targetPosition.set(k * rotX(baseX1, baseY1), k * rotY(baseX1, baseY1), 0);
+        this.sats[2].userData.targetPosition.set(k * rotX(baseX2, baseY2), k * rotY(baseX2, baseY2), 0);
+        this.sats[3].userData.targetPosition.set(k * rotX(baseX3, baseY3), k * rotY(baseX3, baseY3), 0);
 
         if (this.isAutoZoomEnabled) {
             this.adjustCameraZoom();
         }
 
+        const km = (value) => Number.isFinite(Number(value)) ? ` (${Number(value).toFixed(0)} km)` : '';
         this.hud.innerHTML = `
-            GS-S1: ${dA1.toFixed(1)}m | S1-S2: ${d12.toFixed(1)}m<br>
-            GS-S2: ${dA2.toFixed(1)}m | S2-S3: ${d23.toFixed(1)}m<br>
-            GS-S3: ${dA3.toFixed(1)}m | S3-S1: ${d13.toFixed(1)}m
+            GS–Gabriella: ${dA1.toFixed(3)} m<br>
+            GS–Beatriz: ${dA2.toFixed(3)} m | GS–Carolina: ${dA3.toFixed(3)} m<br>
+            Gabriella–Beatriz: ${d12.toFixed(3)} m${km(newData.dBG_km)}<br>
+            Gabriella–Carolina: ${d13.toFixed(3)} m${km(newData.dGC_km)}<br>
+            Beatriz–Carolina: ${d23.toFixed(3)} m
         `;
+    }
+
+    applyNodeColor(sat) {
+        const data = sat.userData;
+        const color = this.selectedNodes.includes(sat)
+            ? data.selectedColor
+            : data.alert ? data.alertColor : data.originalColor;
+        sat.material.color.setHex(color);
+        sat.material.emissive.setHex(data.alert ? data.alertColor : data.originalColor);
+        sat.material.emissiveIntensity = data.alert ? 0.6 : 0.2;
+    }
+
+    // Recebe o evento 'manobra': satélite em CORRIGIR fica vermelho e ganha o resumo no tooltip.
+    updateManeuver(payload) {
+        const satelites = payload?.satelites;
+        if (!satelites) return;
+        this.sats.forEach((sat) => {
+            const info = satelites[sat.userData.name];
+            if (!info) return;
+            sat.userData.alert = info.status === 'CORRIGIR';
+            const best = Number.isInteger(info.melhor) ? info.estrategias?.[info.melhor] : null;
+            sat.userData.missionInfo = [
+                `Status: <b>${info.status}</b>${info.velho ? ' (dado velho)' : ''}`,
+                Number.isFinite(info.dKm) ? `d até Gabriella: ${info.dKm.toFixed(0)} km` : '',
+                best ? `Melhor: ${best.nome}, ΔV ${best.dvTotal.toFixed(1)} m/s` : ''
+            ].filter(Boolean).join('<br>');
+            this.applyNodeColor(sat);
+        });
     }
 
     adjustCameraZoom() {
@@ -588,7 +635,11 @@ class ConstellationWidget extends BaseWidget {
             return;
         }
 
-        const box = new THREE.Box3().setFromObject(this.group);
+        // Enquadra as posições de DESTINO (os nós deslizam até elas), senão a câmera
+        // ajusta o zoom para onde os satélites estavam e corta quem está longe.
+        const box = new THREE.Box3();
+        this.sats.forEach((sat) => box.expandByPoint(sat.userData.targetPosition));
+        box.expandByScalar(5);
 
         if (box.isEmpty()) return;
 

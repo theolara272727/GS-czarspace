@@ -837,3 +837,126 @@ body {
     .action-btn span { display: none; }
     .action-btn { width: 31px; padding: 0; }
 }
+
+/* ===================== Widget de manobras (Missão 2) ===================== */
+.maneuver-widget .widget-content { overflow: hidden; }
+.mnv-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--line);
+    font-size: 10px;
+    letter-spacing: .6px;
+}
+.mnv-spacer { flex: 1; }
+.mnv-source {
+    padding: 2px 6px;
+    border: 1px solid var(--line-bright);
+    color: var(--muted);
+}
+.mnv-source[data-state="on"] { color: #22c55e; border-color: rgba(34,197,94,.5); }
+.mnv-source[data-state="off"] { color: var(--danger); border-color: rgba(255,102,112,.5); }
+.mnv-clock { color: var(--muted); }
+.mnv-btn {
+    padding: 3px 8px;
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--line-bright);
+    font: inherit;
+    cursor: pointer;
+}
+.mnv-btn:hover { border-color: var(--signal); color: #fff; }
+.mnv-btn-force { border-color: var(--signal); color: var(--signal); }
+.mnv-btn:disabled { opacity: .5; cursor: wait; }
+.mnv-message {
+    min-height: 0;
+    padding: 0 8px;
+    font-size: 10px;
+    color: var(--muted);
+}
+.mnv-message:not(:empty) { padding: 4px 8px; border-bottom: 1px solid var(--line); }
+.mnv-message[data-kind="error"] { color: var(--danger); }
+.mnv-message[data-kind="ok"] { color: #22c55e; }
+.mnv-body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.mnv-empty, .mnv-muted { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.mnv-card {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--line-bright);
+    background: rgba(5, 9, 13, .45);
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.mnv-card[data-status="ok"] { border-left-color: #22c55e; }
+.mnv-card[data-status="alert"] { border-left-color: var(--danger); }
+.mnv-card-head { display: flex; align-items: center; gap: 8px; }
+.mnv-card-head strong { font-size: 13px; letter-spacing: .5px; }
+.mnv-badge {
+    padding: 1px 6px;
+    font-size: 10px;
+    letter-spacing: .8px;
+    border: 1px solid currentColor;
+    white-space: nowrap;
+}
+.mnv-badge-ok { color: #22c55e; }
+.mnv-badge-alert { color: var(--danger); background: rgba(255,102,112,.12); }
+.mnv-badge-idle { color: var(--muted); }
+.mnv-badge-stale { color: var(--amber); }
+.mnv-badge-best { color: var(--amber); background: rgba(239,184,91,.1); }
+.mnv-band {
+    position: relative;
+    height: 10px;
+    background: rgba(255,255,255,.04);
+    border: 1px solid var(--line);
+}
+.mnv-band-ok { position: absolute; top: 0; bottom: 0; background: rgba(34,197,94,.22); }
+.mnv-band-target { position: absolute; top: -3px; bottom: -3px; width: 1px; background: #22c55e; }
+.mnv-band-marker {
+    position: absolute;
+    top: -4px;
+    width: 3px;
+    height: 16px;
+    margin-left: -1px;
+    background: #fff;
+    box-shadow: 0 0 6px rgba(255,255,255,.7);
+    transition: left .4s ease;
+}
+.mnv-card[data-status="alert"] .mnv-band-marker { background: var(--danger); box-shadow: 0 0 6px var(--danger); }
+.mnv-band-scale { display: flex; justify-content: space-between; font-size: 9px; color: var(--muted); }
+.mnv-metrics { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 11px; }
+.mnv-metrics b { color: var(--muted); font-weight: normal; margin-right: 3px; }
+.mnv-metrics small { color: var(--muted); }
+.mnv-reasons { margin-left: 16px; font-size: 11px; color: var(--danger); }
+.mnv-strat {
+    border: 1px solid var(--line);
+    padding: 4px 6px;
+    font-size: 11px;
+}
+.mnv-strat-best { border-color: rgba(239,184,91,.6); }
+.mnv-strat-off { opacity: .75; }
+.mnv-strat-head { display: flex; align-items: center; gap: 8px; cursor: default; }
+details.mnv-strat > summary { cursor: pointer; list-style: none; }
+details.mnv-strat > summary::-webkit-details-marker { display: none; }
+details.mnv-strat > summary::before { content: "▸"; color: var(--signal); }
+details.mnv-strat[open] > summary::before { content: "▾"; }
+.mnv-strat-id { color: var(--signal); }
+.mnv-strat-dv { color: #fff; }
+.mnv-strat-time { color: var(--muted); }
+.mnv-strat-reason { margin-top: 2px; }
+.mnv-table { width: 100%; border-collapse: collapse; margin: 6px 0 4px; font-size: 10.5px; }
+.mnv-table th, .mnv-table td { text-align: left; padding: 2px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.mnv-table th { color: var(--muted); font-weight: normal; }
+.mnv-stale td { color: var(--amber); }
+.mnv-pairs { font-size: 11px; }
+.mnv-pairs > summary { cursor: pointer; color: var(--muted); }
+.mnv-foot { font-size: 10px; color: var(--muted); line-height: 1.5; }

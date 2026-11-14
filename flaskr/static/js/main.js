@@ -3,6 +3,7 @@ import terminalWidget from './widgets/terminalWidget.js';
 import chartWidget from './widgets/ChartWidget.js';
 import MapWidget from './widgets/MapWidget.js';
 import ConstellationWidget from './widgets/ConstellationWidget.js';
+import ManeuverWidget from './widgets/ManeuverWidget.js';
 import { createWidgetFromSpec as restoreWidgetFromSpec } from './widgets/WidgetRegistry.js';
 
 const socket = io();
@@ -17,6 +18,8 @@ let historicalPlaybackToken = 0;
 const dataRateWindowMs = 5000;
 const receivedPacketTimes = [];
 let dataRateStartedAt = Date.now();
+let latestManeuver = null;
+let latestUwbStatus = null;
 
 function setLinkStatus(connected) {
     const status = document.getElementById('link-status');
@@ -91,6 +94,35 @@ socket.on('new_data', (data) => {
         updateWidgets(current_data);
     }
 });
+
+// Constelação UWB: decisão de manobras (independe do modo selecionado)
+socket.on('manobra', (payload) => {
+    latestManeuver = payload;
+    for (const widget of widget_list) {
+        if (typeof widget.updateManeuver === 'function') widget.updateManeuver(payload);
+    }
+});
+
+socket.on('uwb_status', (status) => {
+    latestUwbStatus = status;
+    for (const widget of widget_list) {
+        if (typeof widget.updateUwbStatus === 'function') widget.updateUwbStatus(status);
+    }
+});
+
+// Linhas da GS que não são medidas (tabela, respostas a comandos) vão para o Terminal.
+socket.on('serial_line', (payload) => {
+    if (!payload?.line) return;
+    for (const widget of widget_list) {
+        if (typeof widget.appendSerialLine === 'function') widget.appendSerialLine(payload.line);
+    }
+});
+
+function requestManeuver(forcar, callback) {
+    socket.timeout(20000).emit('manobra_solicitar', { forcar }, (error, response) => {
+        callback(error ? { ok: false, message: 'O backend não respondeu a tempo.' } : response);
+    });
+}
 
 socket.on('historical_data', (historicalData) => {
     if (viewMode !== 'historical') return;
@@ -283,6 +315,10 @@ function playHistoricalSamples(samples, speed) {
 
 function registerWidget(widget) {
     widget_list.push(widget);
+
+    if (typeof widget.setManeuverRequester === 'function') widget.setManeuverRequester(requestManeuver);
+    if (latestUwbStatus && typeof widget.updateUwbStatus === 'function') widget.updateUwbStatus(latestUwbStatus);
+    if (latestManeuver && typeof widget.updateManeuver === 'function') widget.updateManeuver(latestManeuver);
 
     widget.closeWidget.addEventListener('click', () => {
         const index = widget_list.indexOf(widget);
@@ -661,6 +697,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (createConstellationBtn) {
         createConstellationBtn.addEventListener('click', () => {
             const widget = registerWidget(new ConstellationWidget('Constelação 3D', 'workspace', current_data));
+            widget.render();
+        });
+    }
+
+    const createManeuverBtn = document.getElementById('maneuverButton');
+    if (createManeuverBtn) {
+        createManeuverBtn.addEventListener('click', () => {
+            const widget = registerWidget(new ManeuverWidget('Manobras', 'workspace'));
             widget.render();
         });
     }

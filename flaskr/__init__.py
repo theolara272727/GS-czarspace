@@ -11,6 +11,7 @@ import sqlite3
 from contextlib import closing
 from flask_socketio import SocketIO, emit
 from datetime import datetime, timezone
+from . import uwb
 
 CSV_FIELDS = (
     'timestamp', 'collection_timestamp', 'received_timestamp',
@@ -104,18 +105,14 @@ def _save_modes(app, modes):
 
 
 #PORTA = 'COM3' #Porta de entrada de dados
-BAUD = 9600 
+BAUD = 9600
 PORTA = 'COM5'
-porta_serial = None
-thread = None
-try:
-    porta_serial = serial.Serial(PORTA, BAUD) #Configura a porta serial
-    porta_serial.timeout = 2
-except serial.SerialException as exc:
-    porta_serial = None
-    print(f"Aviso: não foi possível abrir a porta serial {PORTA}: {exc}")
+# A porta é aberta sob demanda por _get_serial_connection(). Abri-la aqui, na
+# importação, deixava a COM presa e impedia a leitura de usá-la no Windows.
 
 socketio = SocketIO()
+uwb_processor = uwb.ProcessadorUwb()
+uwb_status = {'fonte': 'off', 'conectado': False, 'porta': None, 'mensagem': ''}
 
 CSV_PATH = ""
 serial_connection = None
@@ -172,12 +169,20 @@ def create_app(test_config=None):
     app = Flask(__name__, instance_relative_config=True)
     global CSV_PATH
     CSV_PATH = os.path.join(app.instance_path, 'historico_voo.csv')
+    # Fonte da constelação UWB: 'simulado' (padrão, sem hardware), 'serial' (GS real) ou 'off'.
+    uwb_source = os.environ.get('GS_UWB', 'simulado').strip().lower()
+    default_baud = uwb.BAUD if uwb_source == 'serial' else BAUD
     app.config.from_mapping(
         SECRET_KEY='dev',
         TELEMETRY_CSV=CSV_PATH,
+        UWB_SOURCE=uwb_source,
+        UWB_RAW_LOG=os.path.join(app.instance_path, 'uwb_bruto.csv'),
+        UWB_MANEUVER_LOG=os.path.join(app.instance_path, 'manobras.jsonl'),
         SERIAL_PORT=os.environ.get('SERIAL_PORT', PORTA),
-        SERIAL_BAUD=int(os.environ.get('SERIAL_BAUD', BAUD)),
+        SERIAL_BAUD=int(os.environ.get('SERIAL_BAUD', default_baud)),
         SERIAL_COMMAND_NEWLINE=True,
+        # Leitura curta para a thread UWB não segurar a porta enquanto o Terminal envia comandos.
+        SERIAL_READ_TIMEOUT=0.1 if uwb_source == 'serial' else 1,
         SERIAL_READER_ENABLED=True,
         # Temporário: emite telemetria simulada enquanto não há hardware conectado.
         SYNTHETIC_TELEMETRY_ENABLED=True,
@@ -222,10 +227,23 @@ def create_app(test_config=None):
             return jsonify({'message': 'Não foi possível consultar a disponibilidade.'}), 500
 
 
+    @app.route('/uwb/estado', methods=['GET'])
+    def uwb_state_route():
+        return jsonify({'status': uwb_status, 'manobra': uwb_processor.ultimo_resultado,
+                        'telemetria': uwb_processor.telemetria()})
+
     CSV_PATH = app.config['TELEMETRY_CSV']
     init_telemetry_csv(app)
 
-    if app.config['SYNTHETIC_TELEMETRY_ENABLED']:
+    if app.config['UWB_SOURCE'] in ('simulado', 'serial'):
+        # A constelação UWB assume a telemetria: não liga o gerador genérico nem o
+        # leitor antigo, que disputariam a porta serial e o modo da GS.
+        _ensure_uwb_mode(app)
+        uwb_thread = threading.Thread(
+            target=run_uwb_loop, args=(app,), name='UwbThread', daemon=True
+        )
+        uwb_thread.start()
+    elif app.config['SYNTHETIC_TELEMETRY_ENABLED']:
         synthetic_thread = threading.Thread(
             target=emit_synthetic_data,
             args=(app,),
@@ -497,9 +515,197 @@ def emit_synthetic_data(app):
 
         time.sleep(max(interval, 0.1))
 
+# ============================ CONSTELAÇÃO UWB ================================
+
+def _ensure_uwb_mode(app):
+    """Cria o modo da constelação UWB (com o layout 3D + manobras) se ainda não existir."""
+    with config_lock:
+        try:
+            modes = _validate_modes(_load_modes(app))
+        except ValueError:
+            return
+        if any(mode.get('code') == uwb.MODO_CODIGO for mode in modes):
+            return
+        modes.append({
+            'name': uwb.MODO_NOME,
+            'code': uwb.MODO_CODIGO,
+            'dataTypes': list(uwb.TIPOS_DADOS),
+            'widgets': [
+                {'type': 'constellation', 'title': 'Constelação 3D',
+                 'left': '20px', 'top': '20px', 'width': 620, 'height': 460},
+                {'type': 'manobras', 'title': 'Manobras',
+                 'left': '660px', 'top': '20px', 'width': 520, 'height': 600},
+            ],
+        })
+        _save_modes(app, modes)
+
+
+def _set_uwb_status(**changes):
+    uwb_status.update(changes)
+    socketio.emit('uwb_status', dict(uwb_status))
+
+
+def _close_serial_connection():
+    global serial_connection
+    with serial_lock:
+        if serial_connection is not None:
+            try:
+                serial_connection.close()
+            except (serial.SerialException, OSError):
+                pass
+        serial_connection = None
+
+
+def _uwb_read_line(app, buffer):
+    """Lê o que houver na serial e devolve as linhas completas (sem quebrar medidas ao meio)."""
+    with app.app_context():
+        with serial_lock:
+            connection = _get_serial_connection()
+            chunk = connection.readline()
+    if chunk:
+        buffer.extend(chunk)
+    lines = []
+    while b'\n' in buffer:
+        raw, _, rest = bytes(buffer).partition(b'\n')
+        buffer[:] = rest
+        lines.append(raw.decode('utf-8', errors='ignore').strip())
+    return lines
+
+
+def _uwb_enable_csv(app, buffer):
+    """Liga o modo CSV da GS (o comando V alterna ON/OFF). Devolve as linhas lidas no caminho."""
+    seen = []
+    for _ in range(2):
+        with app.app_context():
+            with serial_lock:
+                connection = _get_serial_connection()
+                connection.reset_input_buffer()
+                connection.write(b'V\n')
+                connection.flush()
+        buffer.clear()
+        started = time.time()
+        while time.time() - started < 2.0:
+            for line in _uwb_read_line(app, buffer):
+                seen.append(line)
+                if 'CSV bruto: ON' in line:
+                    return True, seen
+                if 'CSV bruto: OFF' in line:
+                    break  # estava ligado e desligou: manda V de novo
+            else:
+                continue
+            break
+    return False, seen
+
+
+def _uwb_serial_lines(app):
+    """Gera as linhas da GS real, reconectando sozinho se a porta cair."""
+    port = app.config['SERIAL_PORT']
+    buffer = bytearray()
+    while True:
+        try:
+            with app.app_context():
+                with serial_lock:
+                    _get_serial_connection()
+            _set_uwb_status(fonte='serial', conectado=True, porta=port,
+                            mensagem=f'Conectado em {port}. Aguardando a GS reiniciar...')
+            time.sleep(2.5)  # abrir a porta reseta o ESP32
+            ok, seen = _uwb_enable_csv(app, buffer)
+            _set_uwb_status(mensagem='Modo CSV da GS ligado.' if ok else
+                            "Não confirmei o modo CSV. Envie 'V' pelo Terminal se não chegarem dados.")
+            yield from seen
+            while True:
+                lines = _uwb_read_line(app, buffer)
+                if not lines:
+                    yield None
+                yield from lines
+        except (serial.SerialException, OSError) as error:
+            _close_serial_connection()
+            buffer.clear()
+            _set_uwb_status(fonte='serial', conectado=False, porta=port,
+                            mensagem=f'Sem conexão com {port}: {error}. Tentando de novo...')
+            app.logger.warning('UWB: falha na porta %s: %s', port, error)
+            time.sleep(2)
+            yield None
+
+
+def _uwb_simulated_lines():
+    simulator = uwb.SimuladorUwb()
+    while True:
+        yield simulator.proxima_linha()
+
+
+def _append_line(path, text):
+    try:
+        with open(path, 'a', encoding='utf-8') as log_file:
+            log_file.write(text + '\n')
+    except OSError as error:
+        print(f'Erro ao gravar {path}: {error}')
+
+
+def run_uwb_evaluation(app, forcar=False):
+    try:
+        resultado = uwb_processor.avaliar(forcar=forcar)
+    except Exception:  # a thread de leitura não pode morrer por um erro de análise
+        app.logger.exception('UWB: erro ao avaliar as manobras')
+        return None
+    resultado['fonte'] = dict(uwb_status)
+    socketio.emit('manobra', resultado)
+    if any(sat.get('estrategias') and not sat.get('reaproveitada')
+           for sat in resultado['satelites'].values()):
+        _append_line(app.config['UWB_MANEUVER_LOG'], json.dumps(resultado, ensure_ascii=False))
+    return resultado
+
+
+def run_uwb_loop(app):
+    source = app.config['UWB_SOURCE']
+    if source == 'serial':
+        lines = _uwb_serial_lines(app)
+        raw_log = app.config['UWB_RAW_LOG']
+    else:
+        _set_uwb_status(fonte='simulado', conectado=True, porta=None,
+                        mensagem='Dados UWB simulados (sem hardware).')
+        lines = _uwb_simulated_lines()
+        raw_log = None
+
+    next_telemetry = time.time() + uwb.PERIODO_TELEMETRIA_S
+    next_evaluation = time.time() + uwb.PERIODO_S
+    for line in lines:
+        if line:
+            measurement = uwb_processor.processa_linha(line)
+            if measurement and raw_log:
+                _append_line(raw_log, measurement)
+            elif not measurement and source == 'serial':
+                socketio.emit('serial_line', {'line': line})
+
+        now = time.time()
+        if now >= next_telemetry:
+            dados = uwb_processor.telemetria()
+            if dados:
+                save_telemetry(dados)
+                socketio.emit('new_data', dados)
+            next_telemetry = now + uwb.PERIODO_TELEMETRIA_S
+        if now >= next_evaluation:
+            run_uwb_evaluation(app)
+            next_evaluation = time.time() + uwb.PERIODO_S
+
+
+@socketio.on('manobra_solicitar')
+def handle_maneuver_request(payload):
+    forcar = bool(payload.get('forcar')) if isinstance(payload, dict) else False
+    if current_app.config.get('UWB_SOURCE') not in ('simulado', 'serial'):
+        return {'ok': False, 'message': 'A constelação UWB está desligada (GS_UWB=off).'}
+    resultado = run_uwb_evaluation(current_app._get_current_object(), forcar=forcar)
+    if resultado is None:
+        return {'ok': False, 'message': 'Falha ao calcular as manobras (veja o terminal do Flask).'}
+    return {'ok': True, 'message': 'Manobras recalculadas.'}
+
+
 @socketio.on('connect')
 def init_connection():
     emit('connection_status', {'connected': True})
+    emit('uwb_status', dict(uwb_status))
+    if uwb_processor.ultimo_resultado is not None:
+        emit('manobra', uwb_processor.ultimo_resultado)
 
 
 def _get_serial_connection():
@@ -515,7 +721,7 @@ def _get_serial_connection():
         serial_connection = serial.Serial(
             port=port,
             baudrate=baud,
-            timeout=1,
+            timeout=current_app.config.get('SERIAL_READ_TIMEOUT', 1),
             write_timeout=1
         )
     return serial_connection
@@ -528,6 +734,12 @@ def handle_serial_command(payload):
         return {'ok': False, 'message': 'Digite um comando antes de enviar.'}
     if len(command) > 1024:
         return {'ok': False, 'message': 'O comando deve possuir no máximo 1024 caracteres.'}
+
+    if current_app.config.get('UWB_SOURCE') == 'simulado':
+        return {
+            'ok': False,
+            'message': 'Modo simulado: não há porta serial. Rode com GS_UWB=serial para falar com a GS.'
+        }
 
     command = command.rstrip('\r\n')
     if current_app.config.get('SERIAL_COMMAND_NEWLINE', True):
