@@ -77,8 +77,13 @@ class rawDataWidget extends BaseWidget{
         const command = this.commandInput.value.trim();
         if (!command) return;
 
-        this.appendLine(`> ${command}`, 'command');
         this.commandInput.value = '';
+        this.sendTerminalCommand(command);
+    }
+
+    sendTerminalCommand(command) {
+        if (this.commandButton.disabled) return;
+        this.appendLine(`> ${command}`, 'command');
 
         if (typeof this.sendCommand !== 'function') {
             this.appendLine('Erro: envio serial indisponível.', 'error');
@@ -97,6 +102,14 @@ class rawDataWidget extends BaseWidget{
             this.commandButton.disabled = false;
             this.commandInput.focus();
         });
+    }
+
+    receiveSerialData(data) {
+        if (typeof data?.text !== 'string') return;
+        this.appendLine(
+            `[RX ${data.port} / ${data.baud} baud] ${JSON.stringify(data.text)}`,
+            'serial'
+        );
     }
 
     appendLine(text, kind = 'telemetry') {

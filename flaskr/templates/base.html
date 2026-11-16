@@ -6,6 +6,7 @@
     <title>{% block title %}{% endblock %} - Czar GS</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
     <link rel='stylesheet' href="{{ url_for('static',filename='css/style.css')}}"></link>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/batteryWidget.css') }}">
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
     <script type="importmap">
         {
@@ -74,6 +75,7 @@
                     <div class="button" id="testButton">Painel básico</div>
                     <div class="button" id="rawDataButton">Terminal</div>
                     <div class="button" id="chartButton">Gráfico</div>
+                    <div class="button" id="batteryButton">Bateria</div>
                     <div class="button" id="mapButton">Radar de Voo</div>
                     <div class="button" id="constellationButton">Constelação 3D</div>
                 </div>
@@ -133,10 +135,28 @@
         <aside class="ops-rail" aria-label="Indicadores operacionais">
             <span class="rail-tag">OPS</span>
             <span class="rail-node active" title="Telemetria">TLM</span>
-            <span class="rail-node" title="Comandos">CMD</span>
+            <button id="commandsButton" class="rail-node" type="button" title="Comandos" aria-label="Abrir comandos" aria-expanded="false" aria-controls="commandsPanel">CMD</button>
             <span class="rail-line"></span>
             <span class="rail-foot">GS<br>01</span>
         </aside>
+        <section id="commandsPanel" class="commands-panel" aria-labelledby="commandsTitle" aria-hidden="true" inert>
+            <div class="sidebar-header">
+                <div><span class="station-kicker">SERIAL UPLINK</span><h2 id="commandsTitle">Comandos</h2></div>
+                <button id="closeCommandsButton" class="close-btn" type="button" aria-label="Fechar comandos">&times;</button>
+            </div>
+            <div class="commands-content">
+                <div id="savedCommands" class="saved-commands"></div>
+                <p id="commandsStatus" role="status" aria-live="polite"></p>
+                <form id="commandCreateForm" class="command-create-form">
+                    <h3>Novo comando</h3>
+                    <label for="commandName">Nome do botão</label>
+                    <input id="commandName" name="name" maxlength="80" required>
+                    <label for="commandText">Comando serial</label>
+                    <input id="commandText" name="command" maxlength="1024" required autocomplete="off">
+                    <button class="action-btn" type="submit">Salvar comando</button>
+                </form>
+            </div>
+        </section>
         <main><div id="workspace" class="workspace"></div></main>
     </div>
 

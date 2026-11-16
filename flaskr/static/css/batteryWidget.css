@@ -1,0 +1,20 @@
+.battery-content { display: flex; flex-direction: column; gap: 10px; padding: 12px; min-height: 0; overflow-y: auto; }
+.battery-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.battery-status { text-transform: uppercase; font-size: 10px; letter-spacing: 1px; }
+.battery-display { display: flex; align-items: center; gap: 16px; padding-right: 5px; }
+.battery-gauge { position: relative; flex: 1; height: 44px; padding: 4px; border: 2px solid var(--line-bright, #405159); border-radius: 5px; }
+.battery-gauge::after { content: ''; position: absolute; right: -7px; top: 30%; width: 5px; height: 40%; background: var(--line-bright, #405159); border-radius: 0 2px 2px 0; }
+.battery-fill { height: 100%; width: 0; background: #34d399; border-radius: 2px; transition: width .3s ease; }
+.battery-gauge[data-level="low"] .battery-fill { background: #ef4444; }
+.battery-gauge[data-level="medium"] .battery-fill { background: #fbbf24; }
+.battery-percentage { min-width: 70px; text-align: right; font-size: 26px; }
+.battery-estimate-label { font-size: 10px; }
+.battery-readings { display: flex; gap: 16px; flex-wrap: wrap; }
+.battery-readings > div { display: flex; flex: 1; flex-direction: column; gap: 4px; }
+.battery-readings span { font-size: 10px; text-transform: uppercase; }
+.battery-readings strong { font-size: 18px; white-space: nowrap; }
+.battery-settings { border-top: 1px solid var(--line, #374151); padding-top: 10px; }
+.battery-settings label { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; font-size: 11px; }
+.battery-settings input, .battery-settings select { box-sizing: border-box; width: 100%; min-width: 0; padding: 5px; color: inherit; background: #0e171d; border: 1px solid var(--line, #374151); font: inherit; }
+.battery-settings [role="status"] { font-size: 10px; color: #fbbf24; }
+@media (prefers-reduced-motion: reduce) { .battery-fill { transition: none; } }

@@ -11,6 +11,7 @@ class chartWidget extends BaseWidget {
         this.maxPoints = 50; 
         this.buffers = {};
         this.selectedKey = null;
+        this.customTitle = title && !['Gráfico', 'Grafico'].includes(title) ? title.trim() : '';
         this.knownKeys = new Set();
         this.lineColor = '#d03379';
         this.paused = false;
@@ -23,6 +24,7 @@ class chartWidget extends BaseWidget {
 
         this.buildUI();
         this.setupCanvas();
+        this.refreshKeys(this.data);
 
         this.closeWidget.addEventListener('click', () => {
             this.destroyChart();
@@ -49,6 +51,7 @@ class chartWidget extends BaseWidget {
         return {
             ...super.serialize(),
             type: this.getKind(),
+            customTitle: this.customTitle,
             selectedKey: this.selectedKey,
             lineColor: this.lineColor,
             paused: this.paused,
@@ -61,6 +64,11 @@ class chartWidget extends BaseWidget {
     }
 
     applyState(state = {}) {
+        this.customTitle = typeof state.customTitle === 'string'
+            ? state.customTitle.trim()
+            : typeof state.title === 'string' && !['Gráfico', 'Grafico', state.selectedKey].includes(state.title)
+                ? state.title.trim() : '';
+        this.titleInput.value = this.customTitle;
         if (state.lineColor) {
             this.lineColor = state.lineColor;
             if (this.colorInput) {
@@ -92,6 +100,12 @@ class chartWidget extends BaseWidget {
                 }));
             this.renderFunctions();
         }
+        this.updateHeaderTitle();
+    }
+
+    updateHeaderTitle() {
+        this.title = this.customTitle || this.selectedKey || 'Gráfico';
+        this.titleSpan.textContent = this.title;
     }
 
     buildUI() {
@@ -104,6 +118,8 @@ class chartWidget extends BaseWidget {
         this.configBar.style.flexWrap = 'wrap'; 
 
         this.select = document.createElement('select');
+        this.select.title = 'Dado do gráfico';
+        this.select.setAttribute('aria-label', 'Dado do gráfico');
         this.select.style.backgroundColor = '#1f2937';
         this.select.style.color = '#e0e6ed';
         this.select.style.border = '1px solid #374151';
@@ -115,6 +131,7 @@ class chartWidget extends BaseWidget {
         this.select.addEventListener('mousedown', (e) => e.stopPropagation());
         this.select.addEventListener('change', () => {
             this.selectedKey = this.select.value;
+            this.updateHeaderTitle();
             this.draw();
         });
 
@@ -170,19 +187,32 @@ class chartWidget extends BaseWidget {
         controls.appendChild(this.resetBtn);
         controls.appendChild(this.colorInput);
 
-        this.configBar.appendChild(controls);
+        this.settingsButton = this.makeButton('⚙');
+        this.settingsButton.type = 'button';
+        this.settingsButton.title = 'Configurações do gráfico';
+        this.settingsButton.setAttribute('aria-label', 'Configurações do gráfico');
+        this.settingsButton.setAttribute('aria-expanded', 'false');
+        this.settingsButton.addEventListener('click', () => {
+            this.settingsPanel.hidden = !this.settingsPanel.hidden;
+            this.settingsButton.setAttribute('aria-expanded', String(!this.settingsPanel.hidden));
+        });
+        this.configBar.appendChild(this.settingsButton);
         this.configBar.appendChild(this.readout);
 
-        this.settingsPanel = document.createElement('details');
-        this.settingsPanel.style.flexShrink = '0';
+        this.settingsPanel = document.createElement('div');
+        this.settingsPanel.hidden = true;
+        this.settingsPanel.style.flexShrink = '1';
+        this.settingsPanel.style.minHeight = '0';
+        this.settingsPanel.style.maxHeight = '45%';
+        this.settingsPanel.style.overflowY = 'auto';
         this.settingsPanel.style.border = '1px solid #374151';
         this.settingsPanel.style.borderRadius = '4px';
         this.settingsPanel.style.padding = '4px 6px';
 
-        const settingsTitle = document.createElement('summary');
+        const settingsTitle = document.createElement('div');
         settingsTitle.innerText = 'Configurações';
         settingsTitle.style.color = '#e0e6ed';
-        settingsTitle.style.cursor = 'pointer';
+        settingsTitle.style.marginBottom = '6px';
         settingsTitle.style.fontSize = '0.75rem';
         settingsTitle.style.userSelect = 'none';
 
@@ -233,7 +263,31 @@ class chartWidget extends BaseWidget {
         this.functionBar.appendChild(this.addFunctionBtn);
         this.functionBar.appendChild(this.availableDataHint);
         this.functionBar.appendChild(this.functionsList);
+        const titleLabel = document.createElement('label');
+        titleLabel.textContent = 'Título';
+        titleLabel.style.display = 'flex';
+        titleLabel.style.flexDirection = 'column';
+        titleLabel.style.gap = '4px';
+        titleLabel.style.marginBottom = '6px';
+        this.titleInput = document.createElement('input');
+        this.titleInput.type = 'text';
+        this.titleInput.maxLength = 100;
+        this.titleInput.value = this.customTitle;
+        this.titleInput.style.minWidth = '0';
+        this.titleInput.style.padding = '4px 6px';
+        this.titleInput.style.backgroundColor = '#1f2937';
+        this.titleInput.style.color = '#e0e6ed';
+        this.titleInput.style.border = '1px solid #374151';
+        this.titleInput.style.borderRadius = '4px';
+        this.titleInput.style.fontFamily = 'inherit';
+        this.titleInput.addEventListener('input', () => {
+            this.customTitle = this.titleInput.value.trim();
+            this.updateHeaderTitle();
+        });
+        titleLabel.appendChild(this.titleInput);
         this.settingsPanel.appendChild(settingsTitle);
+        this.settingsPanel.appendChild(titleLabel);
+        this.settingsPanel.appendChild(controls);
         this.settingsPanel.appendChild(this.functionBar);
 
         this.canvasWrapper = document.createElement('div');
@@ -506,26 +560,15 @@ class chartWidget extends BaseWidget {
         this.resizeObserver.observe(this.canvasWrapper);
     }
 
-refreshKeys(payload) {
-        if (!payload) return;
-
-        let validKeys = [];
-        let dataSource;
-
-        if (typeof window !== 'undefined' && window.currentMode && window.currentMode.dataTypes && window.currentMode.dataTypes.length > 0) {
-            validKeys = window.currentMode.dataTypes;
-            dataSource = payload;
-        } else {
-            dataSource = payload.values !== undefined ? payload.values : payload; 
-            validKeys = Object.keys(dataSource);
-        }
-
-        validKeys = validKeys.filter(key => 
-            key !== 'timestamp' && 
-            key !== 'values' &&
-            dataSource[key] !== undefined && 
-            Number.isFinite(parseFloat(dataSource[key]))
-        );
+    refreshKeys(payload = {}) {
+        const dataSource = payload?.values ?? payload ?? {};
+        const configuredKeys = window.currentMode?.dataTypes || [];
+        const validKeys = configuredKeys.length > 0
+            ? configuredKeys.filter(key => key !== 'timestamp' && key !== 'values')
+            : Object.keys(dataSource).filter(key =>
+                key !== 'timestamp' && key !== 'values' &&
+                Number.isFinite(parseFloat(dataSource[key]))
+            );
 
         for (const knownKey of Array.from(this.knownKeys)) {
             if (!validKeys.includes(knownKey)) {
@@ -570,23 +613,18 @@ refreshKeys(payload) {
             this.selectedKey = validKeys[0];
             this.select.value = validKeys[0];
         }
+        this.updateHeaderTitle();
     }
 
     update(new_data) {
         const payload = new_data || this.data;
+        this.refreshKeys(payload);
         if (payload == undefined) return;
         if (this.paused) return; 
 
-        this.refreshKeys(payload);
-
         const exactTimestamp = payload.timestamp || new Date().toLocaleTimeString(); 
         
-        let dataSource;
-        if (typeof window !== 'undefined' && window.currentMode && window.currentMode.dataTypes && window.currentMode.dataTypes.length > 0) {
-            dataSource = payload;
-        } else {
-            dataSource = payload.values !== undefined ? payload.values : payload;
-        }
+        const dataSource = payload.values !== undefined ? payload.values : payload;
 
         const values = Object.fromEntries(
             Object.entries(dataSource)

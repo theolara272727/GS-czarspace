@@ -1,4 +1,6 @@
 import BaseWidget from './widgets/BaseWidget.js';
+import BatteryWidget from './widgets/BatteryWidget.js';
+import initCommandPanel from './CommandPanel.js';
 import terminalWidget from './widgets/terminalWidget.js';
 import chartWidget from './widgets/ChartWidget.js';
 import MapWidget from './widgets/MapWidget.js';
@@ -8,6 +10,7 @@ import { createWidgetFromSpec as restoreWidgetFromSpec } from './widgets/WidgetR
 const socket = io();
 let current_data = {};
 const widget_list = [];
+const selectedModeStorageKey = 'czarspace.selectedMode';
 let savedModes = [];
 let currentMode = null;
 let viewMode = "live";
@@ -89,6 +92,14 @@ socket.on('new_data', (data) => {
     
     if (viewMode === "live") {
         updateWidgets(current_data);
+    }
+});
+
+socket.on('serial_received', (data) => {
+    for (const widget of widget_list) {
+        if (typeof widget.receiveSerialData === 'function') {
+            widget.receiveSerialData(data);
+        }
     }
 });
 
@@ -373,6 +384,14 @@ function loadMode(mode) {
     clearWorkspace();
     currentMode = mode;
     window.currentMode = mode;
+    try {
+        localStorage.setItem(selectedModeStorageKey, JSON.stringify({
+            code: mode.code,
+            name: mode.name
+        }));
+    } catch {
+        // A seleção continua funcionando se o armazenamento estiver bloqueado.
+    }
     if (!Array.isArray(mode.widgets)) return;
 
     mode.widgets.filter(isValidWidgetSpec).forEach((widgetSpec) => {
@@ -649,6 +668,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    const createBatteryButton = document.getElementById('batteryButton');
+    if (createBatteryButton) {
+        createBatteryButton.addEventListener('click', () => {
+            const widget = registerWidget(new BatteryWidget('Bateria', 'workspace', current_data));
+            widget.render();
+        });
+    }
+
     const createMaptButton = document.getElementById('mapButton');
     if (createMaptButton) {
         createMaptButton.addEventListener('click', () => {
@@ -811,6 +838,17 @@ const historyControls = document.getElementById('history-controls');
     );
 
     await fetchModesFromServer();
+    initCommandPanel(sendSerialCommand);
+    let selectedMode;
+    try {
+        selectedMode = JSON.parse(localStorage.getItem(selectedModeStorageKey));
+    } catch {
+        selectedMode = null;
+    }
+    currentMode = savedModes.find(mode => selectedMode?.code && mode.code === selectedMode.code)
+        || savedModes.find(mode => mode.name === selectedMode?.name)
+        || savedModes[0]
+        || null;
     renderModesUI();
-    if (savedModes.length > 0) loadMode(savedModes[0]);
+    if (currentMode) loadMode(currentMode);
 });

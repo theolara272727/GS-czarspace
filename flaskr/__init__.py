@@ -103,17 +103,48 @@ def _save_modes(app, modes):
     os.replace(temporary_path, path)
 
 
+def _validate_commands(commands):
+    if not isinstance(commands, list) or len(commands) > 100:
+        raise ValueError('Informe uma lista com até 100 comandos.')
+    normalized = []
+    for item in commands:
+        if not isinstance(item, dict):
+            raise ValueError('Cada comando deve ser um objeto.')
+        name = item.get('name')
+        command = item.get('command')
+        if not isinstance(name, str) or not name.strip() or len(name) > 80:
+            raise ValueError('O nome deve ter entre 1 e 80 caracteres.')
+        if not isinstance(command, str) or not command.strip() or len(command) > 1024:
+            raise ValueError('O comando deve ter entre 1 e 1024 caracteres.')
+        if '\r' in command or '\n' in command:
+            raise ValueError('Cadastre um comando por botão, sem quebras de linha.')
+        normalized.append({'name': name.strip(), 'command': command.strip()})
+    return normalized
+
+
+def _load_commands(app):
+    path = os.path.join(app.instance_path, 'commands.json')
+    if not os.path.exists(path):
+        return [{'name': 'iniciar', 'command': 'G 00 {timestamp}'}]
+    with open(path, 'r', encoding='utf-8') as file:
+        return _validate_commands(json.load(file)['commands'])
+
+
+def _save_commands(app, commands):
+    path = os.path.join(app.instance_path, 'commands.json')
+    temporary_path = f'{path}.tmp'
+    with open(temporary_path, 'w', encoding='utf-8') as file:
+        json.dump({'commands': commands}, file, ensure_ascii=False, indent=2)
+        file.flush()
+        os.fsync(file.fileno())
+    os.replace(temporary_path, path)
+
+
 #PORTA = 'COM3' #Porta de entrada de dados
-BAUD = 9600 
-PORTA = 'COM5'
-porta_serial = None
-thread = None
-try:
-    porta_serial = serial.Serial(PORTA, BAUD) #Configura a porta serial
-    porta_serial.timeout = 2
-except serial.SerialException as exc:
-    porta_serial = None
-    print(f"Aviso: não foi possível abrir a porta serial {PORTA}: {exc}")
+BAUD = 115200
+PORTA = 'COM14'
+# A conexão é aberta sob demanda em _get_serial_connection(), para que
+# leitura e envio de comandos compartilhem a mesma porta serial.
 
 socketio = SocketIO()
 
@@ -180,7 +211,7 @@ def create_app(test_config=None):
         SERIAL_COMMAND_NEWLINE=True,
         SERIAL_READER_ENABLED=True,
         # Temporário: emite telemetria simulada enquanto não há hardware conectado.
-        SYNTHETIC_TELEMETRY_ENABLED=True,
+        SYNTHETIC_TELEMETRY_ENABLED=False,
         SYNTHETIC_TELEMETRY_INTERVAL=1.0,
     )
     app.config.from_mapping(test_config)
@@ -210,6 +241,31 @@ def create_app(test_config=None):
         with config_lock:
             _save_modes(app, modes)
         return jsonify({'status': 'ok', 'modes': modes})
+
+    @app.route('/commands', methods=['GET'])
+    def get_commands():
+        try:
+            with config_lock:
+                commands = _load_commands(app)
+            return jsonify({'commands': commands})
+        except (OSError, ValueError, KeyError, TypeError):
+            return jsonify({'message': 'Não foi possível carregar os comandos.'}), 500
+
+    @app.route('/commands', methods=['POST'])
+    def save_commands_route():
+        payload = request.get_json(silent=True)
+        try:
+            commands = _validate_commands(
+                payload.get('commands') if isinstance(payload, dict) else None
+            )
+        except ValueError as error:
+            return jsonify({'message': str(error)}), 400
+        try:
+            with config_lock:
+                _save_commands(app, commands)
+        except OSError:
+            return jsonify({'message': 'Não foi possível salvar os comandos.'}), 500
+        return jsonify({'status': 'ok', 'commands': commands})
 
     @app.route('/telemetry-availability', methods=['GET'])
     def telemetry_availability_route():
@@ -267,6 +323,8 @@ def parse_serial_message(raw_message, modes):
     text = raw_message.strip()
     if text.startswith('{'):
         message = json.loads(text)
+        if not isinstance(message, dict):
+            raise ValueError('A mensagem de telemetria deve ser um objeto JSON.')
         collected_at = message.get('timestamp', message.get('collectedAt'))
         mode_code = message.get('modeCode', message.get('mode', message.get('code')))
         values = message.get('values', message.get('data'))
@@ -291,6 +349,11 @@ def parse_serial_message(raw_message, modes):
         telemetry = {name: float(value) for name, value in zip(data_types, values)}
     except (TypeError, ValueError) as error:
         raise ValueError('Todos os valores de telemetria devem ser numéricos.') from error
+    # NaN e infinitos não são valores JSON válidos.
+    telemetry = {
+        name: value if math.isfinite(value) else None
+        for name, value in telemetry.items()
+    }
 
     return {
         'timestamp': _normalize_timestamp(collected_at),
@@ -301,16 +364,27 @@ def parse_serial_message(raw_message, modes):
     }
 
 
-# def read_serial(app):
-#     with app.app_context():
-#         with serial_lock:
-#             connection = _get_serial_connection()
-#             raw_message = connection.readline()
-#     if not raw_message:
-#         return None
-#     with config_lock:
-#         modes = _validate_modes(_load_modes(app))
-#     return parse_serial_message(raw_message, modes)
+def read_serial(app):
+    """Interpreta telemetria e encaminha outras respostas ao terminal."""
+    with app.app_context():
+        with serial_lock:
+            connection = _get_serial_connection()
+            raw_message = connection.readline()
+    if not raw_message:
+        return None
+    try:
+        with config_lock:
+            modes = _validate_modes(_load_modes(app))
+        return parse_serial_message(raw_message, modes)
+    except (ValueError, TypeError, OverflowError):
+        # Respostas fora do protocolo aparecem somente no terminal.
+        socketio.emit('serial_received', {
+            'text': raw_message.decode('utf-8', errors='replace'),
+            'hex': raw_message.hex(),
+            'port': getattr(connection, 'port', app.config.get('SERIAL_PORT')),
+            'baud': getattr(connection, 'baudrate', app.config.get('SERIAL_BAUD')),
+        })
+        return None
 # tempo_simulacao = 0.0
 
 # def read_serial(app):
@@ -368,59 +442,8 @@ def parse_serial_message(raw_message, modes):
 #         }
 #     }
 
-tempo_simulacao = 0.0
 
-def read_serial(app):
-    global tempo_simulacao
-    
-    # Pausa para simular a taxa de amostragem do DW1000
-    time.sleep(0.5)
-    tempo_simulacao += 0.05
-    
-    t = tempo_simulacao
 
-    # Simulação das "Órbitas" apenas no plano X, Y
-    # A GS está em (0,0). Os satélites orbitam ao redor dela.
-    
-    # Satélite 1 (Mais próximo/Rápido)
-    x1 = 100 * math.cos(t)
-    y1 = 100 * math.sin(t)
-
-    # Satélite 2 (Órbita média)
-    x2 = 100 * math.cos(t * 0.8 + 1.2)
-    y2 = 100 * math.sin(t * 0.8 + 1.2)
-
-    # Satélite 3 (Órbita elíptica)
-    x3 = 100 * math.cos(t * 0.5 + 2.5)
-    y3 = 100 * math.sin(t * 0.5 + 2.5)
-
-    # Cálculo das distâncias reais baseadas nas posições 2D (Evita triângulos impossíveis)
-    # GS fixa em (0, 0)
-    dA1 = math.sqrt(x1**2 + y1**2)
-    dA2 = math.sqrt(x2**2 + y2**2)
-    dA3 = math.sqrt(x3**2 + y3**2)
-
-    d12 = math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
-    d23 = math.sqrt((x3 - x2)**2 + (y3 - y2)**2)
-    d13 = math.sqrt((x3 - x1)**2 + (y3 - y1)**2)
-
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc).isoformat()
-
-    return {
-        'timestamp': now,
-        'receivedTimestamp': now,
-        'modeCode': '0x01', # Verifique o modo hexadecimal no seu painel
-        'modeName': 'Simulacao Constelacao',
-        'values': {
-            'dA1': round(dA1, 2),
-            'dA2': round(dA2, 2),
-            'dA3': round(dA3, 2),
-            'd12': round(d12, 2),
-            'd23': round(d23, 2),
-            'd13': round(d13, 2)
-        }
-    }
 
 def emit_data(app):
     while True:
@@ -433,8 +456,6 @@ def emit_data(app):
         except (serial.SerialException, OSError) as error:
             app.logger.warning('Falha na leitura serial: %s', error)
             time.sleep(2)
-        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
-            app.logger.warning('Mensagem serial ignorada: %s', error)
 
 
 def _synthetic_value(data_type, sample_number, position):
@@ -538,10 +559,18 @@ def handle_serial_command(payload):
         with serial_lock:
             connection = _get_serial_connection()
             bytes_written = connection.write(encoded_command)
+            if bytes_written != len(encoded_command):
+                raise serial.SerialTimeoutException(
+                    f'Envio incompleto: {bytes_written} de {len(encoded_command)} bytes.'
+                )
             connection.flush()
+            port = getattr(connection, 'port', current_app.config.get('SERIAL_PORT'))
+            baud = getattr(connection, 'baudrate', current_app.config.get('SERIAL_BAUD'))
         return {
             'ok': True,
-            'message': f'Comando enviado ({bytes_written} bytes).'
+            'message': (
+                f'Escrito em {port} a {baud} baud ({bytes_written} bytes)'
+            )
         }
     except (serial.SerialException, OSError) as error:
         return {
