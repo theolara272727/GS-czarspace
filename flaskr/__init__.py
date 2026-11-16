@@ -300,7 +300,6 @@ def create_app(test_config=None):
     if app.config['UWB_SOURCE'] in ('simulado', 'serial'):
         # A constelação UWB assume a telemetria: não liga o gerador genérico nem o
         # leitor antigo, que disputariam a porta serial e o modo da GS.
-        _ensure_uwb_mode(app)
         uwb_thread = threading.Thread(
             target=run_uwb_loop, args=(app,), name='UwbThread', daemon=True
         )
@@ -543,29 +542,6 @@ def emit_synthetic_data(app):
         time.sleep(max(interval, 0.1))
 
 # ============================ CONSTELAÇÃO UWB ================================
-
-def _ensure_uwb_mode(app):
-    """Cria o modo da constelação UWB (com o layout 3D + manobras) se ainda não existir."""
-    with config_lock:
-        try:
-            modes = _validate_modes(_load_modes(app))
-        except ValueError:
-            return
-        if any(mode.get('code') == uwb.MODO_CODIGO for mode in modes):
-            return
-        modes.append({
-            'name': uwb.MODO_NOME,
-            'code': uwb.MODO_CODIGO,
-            'dataTypes': list(uwb.TIPOS_DADOS),
-            'widgets': [
-                {'type': 'constellation', 'title': 'Constelação 3D',
-                 'left': '20px', 'top': '20px', 'width': 620, 'height': 460},
-                {'type': 'manobras', 'title': 'Manobras',
-                 'left': '660px', 'top': '20px', 'width': 520, 'height': 600},
-            ],
-        })
-        _save_modes(app, modes)
-
 
 def _set_uwb_status(**changes):
     uwb_status.update(changes)
