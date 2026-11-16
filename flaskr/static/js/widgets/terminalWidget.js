@@ -102,13 +102,14 @@ class rawDataWidget extends BaseWidget{
     appendLine(text, kind = 'telemetry') {
         const newLine = document.createElement('span');
         newLine.className = `widgetLine terminal-line-${kind}`;
-        newLine.style.whiteSpace = 'nowrap';
+        newLine.style.whiteSpace = kind === 'device' ? 'pre' : 'nowrap';
         newLine.style.fontFamily = 'monospace';
         newLine.style.padding = '2px 4px';
 
         if (kind === 'error') newLine.style.color = '#ef4444';
         if (kind === 'success') newLine.style.color = '#22c55e';
         if (kind === 'command') newLine.style.color = '#d03379';
+        if (kind === 'device') newLine.style.color = '#94a3b8';
         if (kind === 'telemetry' && this.lineCounter % 2 === 1) {
             newLine.style.backgroundColor = '#1f2937';
         }
@@ -122,6 +123,11 @@ class rawDataWidget extends BaseWidget{
                 this.output.scrollTop = this.output.scrollHeight;
             });
         }
+    }
+
+    // Texto impresso pela GS (tabela de pares, "CSV bruto: ON", respostas a comandos)
+    appendSerialLine(text) {
+        this.appendLine(`< ${text}`, 'device');
     }
 
     update(new_data){
