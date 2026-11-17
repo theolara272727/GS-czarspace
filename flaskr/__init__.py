@@ -12,6 +12,7 @@ from contextlib import closing
 from flask_socketio import SocketIO, emit
 from datetime import datetime, timezone
 from . import uwb
+from . import simulacao
 
 CSV_FIELDS = (
     'timestamp', 'collection_timestamp', 'received_timestamp',
@@ -690,6 +691,18 @@ def run_uwb_loop(app):
         if now >= next_evaluation:
             run_uwb_evaluation(app)
             next_evaluation = time.time() + uwb.PERIODO_S
+
+
+@socketio.on('simular_manobra')
+def handle_maneuver_simulation(payload):
+    """Botão SIMULAR: propaga as órbitas a partir do estado travado no navegador."""
+    try:
+        return {'ok': True, 'simulacao': simulacao.simular(payload)}
+    except ValueError as error:
+        return {'ok': False, 'message': str(error)}
+    except Exception:
+        current_app.logger.exception('Falha na simulação de manobra')
+        return {'ok': False, 'message': 'Falha ao simular (veja o terminal do Flask).'}
 
 
 @socketio.on('manobra_solicitar')

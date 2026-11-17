@@ -5,6 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 class ConstellationWidget extends BaseWidget {
     static widgetType = 'constellation';
+    static freezesOnSimulation = true;
 
     constructor(title, idContainerDestino, initialData = {}) {
         super(title, idContainerDestino);
@@ -568,7 +569,9 @@ class ConstellationWidget extends BaseWidget {
         // Invertemos o sinal para garantir que fique do lado oposto ao Satélite 2
         const baseY3 = -Math.sqrt(Math.max(0, dA3 ** 2 - baseX3 ** 2)); 
         
-        let t = Date.now() / 10000; // Velocidade da órbita
+        // Vista ao vivo parada (sem giro): a disposição só muda quando as distâncias medidas
+        // mudam. O movimento orbital fica na janela de simulação (botão SIMULAR).
+        const t = 0;
         const cosT = Math.cos(t);
         const sinT = Math.sin(t);
 
