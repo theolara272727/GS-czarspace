@@ -672,7 +672,10 @@ body {
 .saved-command-send code { color: var(--muted); margin-top: 5px; font-size: 11px; }
 .commands-panel button:disabled { opacity: .5; cursor: wait; }
 .command-create-form { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--line); padding-top: 12px; }
-.command-create-form input { width: 100%; box-sizing: border-box; padding: 8px; color: var(--text); background: #0e171d; border: 1px solid var(--line); font: inherit; }
+.command-create-form input, .command-create-form select { width: 100%; box-sizing: border-box; padding: 8px; color: var(--text); background: #0e171d; border: 1px solid var(--line); font: inherit; }
+.command-target, .terminal-command-form select { min-width: 0; padding: 4px; color: var(--text); background: #0e171d; border: 1px solid var(--line); font: inherit; }
+.command-target { align-self: center; max-width: 95px; }
+.terminal-command-form select { max-width: 90px; }
 .command-create-form small { color: var(--muted); line-height: 1.5; }
 #commandsStatus { overflow-wrap: anywhere; line-height: 1.5; }
 #commandsStatus[data-error="true"] { color: #ef4444; }

@@ -24,6 +24,7 @@ import time
 from datetime import datetime, timezone
 
 from . import analisar_manobras as am
+from .telemetry import parse_serial_message
 
 # ============================== CONFIGURAÇÃO ==================================
 # ID da placa UWB -> satélite.  ID 0 é a própria GS (âncora principal).
@@ -58,9 +59,12 @@ PERIODO_TELEMETRIA_S = 0.5   # intervalo entre envios das distâncias ao navegad
 LIMIAR_REANALISE_KM = 5.0    # só recalcula a manobra se h ou d mudar mais que isso
 BAUD = 115200
 
-# Modo da GS em que a telemetria UWB é publicada (aba "MISSION MODES").
-MODO_CODIGO = "0x10"
+# Código das mensagens de distâncias da missão 2.
+MODO_CODIGO = "0x31"
 MODO_NOME = "Constelação UWB"
+
+# Associação semântica dos campos aos nós, independente da ordem no config.json.
+DESTINOS_DISTANCIAS = {'D_GS': ID_GS, **{f'D_{nome}': no for no, nome in ID_SAT.items()}}
 
 CSV_RE = re.compile(r"D,(\d+),(\d+),(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?),(\d+)")
 
@@ -87,6 +91,54 @@ def _id_de(nome):
 
 def _agora_iso():
     return datetime.now(timezone.utc).isoformat()
+
+
+def parse_serial_line(linha, modes=None):
+    """Usa o parser comum e os modos cadastrados; adapta também o CSV legado."""
+    m = CSV_RE.search(linha)
+    if m:
+        a, b = int(m.group(1)), int(m.group(2))
+        distancia = float(m.group(3))
+        valores = {
+            'Origem': a, 'Destino': b,
+            'Distancia': distancia if math.isfinite(distancia) else None,
+            'RSSI': float(m.group(4)),
+        }
+        medidas = [(a, b, distancia)] if math.isfinite(distancia) and distancia >= 0 and a != b else []
+        recebido = _agora_iso()
+        return {
+            'timestamp': recebido,
+            'receivedTimestamp': recebido,
+            'deviceTimestamp': int(m.group(5)),
+            'modeCode': MODO_CODIGO,
+            'modeName': MODO_NOME,
+            'values': valores,
+            'measurements': medidas,
+            'raw': m.group(0),
+        }
+    else:
+        try:
+            packet = parse_serial_message(linha, modes or [], use_received_timestamp=True)
+        except (ValueError, TypeError, OverflowError):
+            return None
+        packet['raw'] = linha.strip()
+        packet['measurements'] = medidas_por_nome(packet['values'])
+        return packet
+
+
+def medidas_por_nome(valores):
+    origem = valores.get('Origem')
+    if (origem is None or not math.isfinite(origem) or int(origem) != origem
+            or int(origem) not in (ID_GS, *ID_SAT)):
+        return []
+    origem = int(origem)
+    medidas = []
+    for campo, destino in DESTINOS_DISTANCIAS.items():
+        distancia = valores.get(campo)
+        if (distancia is not None and math.isfinite(distancia)
+                and distancia >= 0 and origem != destino):
+            medidas.append((origem, destino, distancia))
+    return medidas
 
 
 # ============================== DADOS DOS PARES ===============================
@@ -137,17 +189,23 @@ class ProcessadorUwb:
         self.medidas_total = 0
 
     # ---------- entrada ----------
-    def processa_linha(self, linha, t=None):
-        """Devolve o texto 'D,...' reconhecido, ou None se a linha não for uma medida."""
-        m = CSV_RE.search(linha)
-        if not m:
+    def processa_linha(self, linha, t=None, modes=None):
+        """Aceita pacotes 0x31 e CSV legado; NaN não substitui medidas válidas."""
+        packet = parse_serial_line(linha, modes)
+        if packet is None:
             return None
-        a, b = int(m.group(1)), int(m.group(2))
+        return self.processa_telemetria(packet, t=t)
+
+    def processa_telemetria(self, packet, t=None):
+        """Consome o mesmo pacote nomeado que é enviado ao terminal."""
+        medidas = packet['measurements']
+        recebido_em = time.time() if t is None else t
         with self._lock:
-            self.pares.adiciona(a, b, float(m.group(3)), time.time() if t is None else t)
-            self.medidas_desde_avaliacao += 1
-            self.medidas_total += 1
-        return m.group(0)
+            for a, b, distancia in medidas:
+                self.pares.adiciona(a, b, distancia, recebido_em)
+            self.medidas_desde_avaliacao += len(medidas)
+            self.medidas_total += len(medidas)
+        return packet['raw']
 
     # ---------- telemetria para os widgets ----------
     def telemetria(self):

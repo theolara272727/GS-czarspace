@@ -1,18 +1,46 @@
 import BaseWidget from './BaseWidget.js';
 import { registerWidgetType } from './WidgetRegistry.js';
 
+function numeroFinito(value) {
+    if (typeof value !== 'number' && typeof value !== 'string') return null;
+    if (typeof value === 'string' && !value.trim()) return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+}
+
+function codigoIcao(value, hexadecimal = false) {
+    if (typeof value === 'string') {
+        const text = value.trim();
+        if (/^(?:0x[0-9a-f]+|[0-9a-f]*[a-f][0-9a-f]*)$/i.test(text) || hexadecimal) {
+            if (!/^(?:0x)?[0-9a-f]{1,6}$/i.test(text)) return null;
+            value = Number.parseInt(text.replace(/^0x/i, ''), 16);
+        }
+    }
+    const number = numeroFinito(value);
+    if (number === null || !Number.isInteger(number) || number < 0 || number > 0xFFFFFF) return null;
+    return number.toString(16).toUpperCase().padStart(6, '0');
+}
+
+function escaparHtml(value) {
+    return String(value ?? '—').replace(/[&<>"']/g, char => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[char]);
+}
+
 class MapWidget extends BaseWidget {
-    constructor(title, idContainerDestino) {
+    constructor(title, idContainerDestino, data) {
         super(title, idContainerDestino);
 
         this.aviaoFocado = null;
-        this.marcadoresAtivos = {};
-        this.ultimasCoordenadas = {}; // Para o cálculo do ângulo visual
-        this.ultimosAngulos = {};
+        this.marcadoresAtivos = Object.create(null);
+        this.ultimasCoordenadas = Object.create(null); // Para o cálculo do ângulo visual
+        this.ultimosAngulos = Object.create(null);
+        this.dadosDosVoos = Object.create(null);
+        this.centralizouPrimeiroAviao = false;
         
         // NOVAS VARIÁVEIS PARA O RASTRO E INFORMAÇÕES
-        this.linhasDeRastro = {}; // Guarda as polylines de cada avião
-        this.historicoPosicoes = {}; // Guarda as coordenadas para desenhar a linha
+        this.linhasDeRastro = Object.create(null); // Guarda as polylines de cada avião
+        this.historicoPosicoes = Object.create(null); // Guarda as coordenadas para desenhar a linha
 
         this.mapContainer = document.createElement('div');
         this.mapId = 'mapa-' + Math.random().toString(36).substring(2, 9);
@@ -52,10 +80,12 @@ class MapWidget extends BaseWidget {
         this.resizeObserver.observe(this.content);
 
         this.closeWidget.addEventListener('click', () => this.destroyMap());
+        this.update(data);
     }
 
     render() {
         super.render();
+        if (this.map || this.renderTimer != null) return;
         
         this.renderTimer = setTimeout(() => {
             this.renderTimer = null;
@@ -69,6 +99,7 @@ class MapWidget extends BaseWidget {
             }).addTo(this.map);
             
             const soltarCamera = () => {
+                this.centralizouPrimeiroAviao = true;
                 // 1. Esconde o painel imediatamente, independente de ter avião focado ou não
                 if (this.infoPanel) {
                     this.infoPanel.style.display = 'none';
@@ -80,16 +111,21 @@ class MapWidget extends BaseWidget {
                     
                     let aviao = this.marcadoresAtivos[idDoAviaoSeguido];
                     if (aviao) {
-                        aviao.slideTo(aviao.getLatLng(), {
-                            duration: 0,
-                            keepAtCenter: false
-                        });
+                        if (typeof aviao.slideTo === 'function') {
+                            aviao.slideTo(aviao.getLatLng(), {
+                                duration: 0,
+                                keepAtCenter: false
+                            });
+                        }
                     }
                 }
             };
             
             this.map.on('dragstart', soltarCamera);
             this.map.on('click', soltarCamera);
+            for (const aviao of Object.values(this.dadosDosVoos)) {
+                this.atualizarAviao(aviao);
+            }
         }, 0);
     }
 
@@ -98,6 +134,7 @@ class MapWidget extends BaseWidget {
             clearTimeout(this.renderTimer);
             this.renderTimer = null;
         }
+        this.clearData();
         if (this.map) {
             this.map.remove();
             this.map = null;
@@ -141,12 +178,12 @@ class MapWidget extends BaseWidget {
     atualizarPainel(dadosDoVoo) {
         this.infoPanel.innerHTML = `
             <div style="font-size: 16px; font-weight: bold; border-bottom: 1px solid #555; padding-bottom: 5px; margin-bottom: 10px; color: #ffeb3b;">
-                Flight: ${dadosDoVoo.id}
+                Flight: ${escaparHtml(dadosDoVoo.callsign || dadosDoVoo.id)}
             </div>
-            <div><span style="color:#aaa;">Hex:</span> ${dadosDoVoo.hex || 'N/A'}</div>
-            <div><span style="color:#aaa;">Alt:</span> ${dadosDoVoo.altitude} ft</div>
-            <div><span style="color:#aaa;">Speed:</span> ${dadosDoVoo.speed || 0} kt</div>
-            <div><span style="color:#aaa;">Track:</span> ${dadosDoVoo.track || 0}°</div>
+            <div><span style="color:#aaa;">Hex:</span> ${escaparHtml(dadosDoVoo.hex)}</div>
+            <div><span style="color:#aaa;">Alt:</span> ${escaparHtml(dadosDoVoo.altitude)} ft</div>
+            <div><span style="color:#aaa;">Speed:</span> ${escaparHtml(dadosDoVoo.speed)} kt</div>
+            <div><span style="color:#aaa;">Track:</span> ${escaparHtml(dadosDoVoo.track)}°</div>
             <div style="margin-top: 10px; border-top: 1px dashed #555; padding-top: 5px;">
                 <span style="color:#aaa;">Lat:</span> ${dadosDoVoo.lat} <br>
                 <span style="color:#aaa;">Lon:</span> ${dadosDoVoo.lng}
@@ -198,7 +235,7 @@ class MapWidget extends BaseWidget {
         }
 
         let resultado = this.calcularAnguloDirecao(idVoo, coordAnterior.lat, coordAnterior.lng, lat, lng);
-        let angulo = resultado.angulo;
+        let angulo = dadosDoVoo.track ?? resultado.angulo;
         
         if (resultado.atualizaFiltro) {
             this.ultimasCoordenadas[idVoo] = { lat: lat, lng: lng };
@@ -213,16 +250,21 @@ class MapWidget extends BaseWidget {
         `;
 
         // TEXTO DO HOVER (Agora mostra só o ID)
-        let tooltipSimples = `<b>${idVoo}</b>`;
+        let tooltipSimples = `<b>${escaparHtml(dadosDoVoo.callsign || idVoo)}</b>`;
 
         if (this.marcadoresAtivos[idVoo]) {
             let marker = this.marcadoresAtivos[idVoo];
             let deveCentralizar = (this.aviaoFocado === idVoo);
 
-            marker.slideTo([lat, lng], {
-                duration: 2000,       
-                keepAtCenter: deveCentralizar,   
-            });
+            if (typeof marker.slideTo === 'function') {
+                marker.slideTo([lat, lng], {
+                    duration: 2000,
+                    keepAtCenter: deveCentralizar,
+                });
+            } else {
+                marker.setLatLng([lat, lng]);
+                if (deveCentralizar) this.map.panTo([lat, lng]);
+            }
 
             marker.setTooltipContent(tooltipSimples);
             
@@ -265,21 +307,64 @@ class MapWidget extends BaseWidget {
                     this.infoPanel.style.display = 'none'; // Esconde painel
                 } else {
                     this.aviaoFocado = idVoo; 
-                    this.atualizarPainel(dadosDoVoo); // Preenche painel
+                    this.atualizarPainel(this.dadosDosVoos[idVoo]);
                     this.infoPanel.style.display = 'block'; // Mostra painel
                 }
             });
             
             this.marcadoresAtivos[idVoo] = novoMarcador;
+            if (!this.centralizouPrimeiroAviao) {
+                this.centralizouPrimeiroAviao = true;
+                this.map.setView([lat, lng], this.map.getZoom());
+            }
         }
     }
 
+    normalizarAviao(dados) {
+        if (!dados || typeof dados !== 'object') return null;
+        const lat = numeroFinito(dados.Latitude ?? dados.lat);
+        const lng = numeroFinito(dados.Longitude ?? dados.lng);
+        if (lat === null || lng === null || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+        const hex = dados.ICAO != null ? codigoIcao(dados.ICAO) : codigoIcao(dados.hex, true);
+        const id = dados.id != null ? String(dados.id).trim() : hex;
+        if (!id) return null;
+        const callsign = dados.Callsign ?? dados.callsign;
+        return {
+            id, hex, lat, lng,
+            callsign: typeof callsign === 'string' ? callsign.trim() : null,
+            altitude: numeroFinito(dados.Altitude ?? dados.altitude),
+            speed: numeroFinito(dados.Velocidade ?? dados.speed),
+            track: numeroFinito(dados.Track ?? dados.track),
+        };
+    }
+
     update(dados) {
-        if (dados && dados.avioes) {
-            for (let aviaoAtual of dados.avioes) {
-                this.atualizarAviao(aviaoAtual);
-            }
+        super.update(dados);
+        const values = dados?.values ?? dados;
+        if (!values || typeof values !== 'object') return;
+        const avioes = Array.isArray(values.avioes) ? values.avioes : [values];
+        for (const item of avioes) {
+            const aviao = this.normalizarAviao(item);
+            if (!aviao) continue;
+            this.dadosDosVoos[aviao.id] = aviao;
+            this.atualizarAviao(aviao);
         }
+    }
+
+    clearData() {
+        super.clearData();
+        for (const layer of [...Object.values(this.marcadoresAtivos), ...Object.values(this.linhasDeRastro)]) {
+            if (this.map) this.map.removeLayer(layer);
+        }
+        this.marcadoresAtivos = Object.create(null);
+        this.linhasDeRastro = Object.create(null);
+        this.historicoPosicoes = Object.create(null);
+        this.ultimasCoordenadas = Object.create(null);
+        this.ultimosAngulos = Object.create(null);
+        this.dadosDosVoos = Object.create(null);
+        this.aviaoFocado = null;
+        this.centralizouPrimeiroAviao = false;
+        this.infoPanel.style.display = 'none';
     }
 
     cleanup() {

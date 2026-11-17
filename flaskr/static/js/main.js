@@ -23,6 +23,7 @@ const receivedPacketTimes = [];
 let dataRateStartedAt = Date.now();
 let latestManeuver = null;
 let latestUwbStatus = null;
+let latestUwbTelemetry = null;
 
 function setLinkStatus(connected) {
     const status = document.getElementById('link-status');
@@ -90,7 +91,8 @@ socket.on('new_data', (data) => {
         timestamp: data.timestamp,
         collectionTimestamp: data.timestamp,
         receivedTimestamp: data.receivedTimestamp,
-        modeCode: data.modeCode
+        modeCode: data.modeCode,
+        serialSource: data.serialSource
     };
     
     if (viewMode === "live") {
@@ -102,6 +104,14 @@ socket.on('serial_received', (data) => {
     for (const widget of widget_list) {
         if (typeof widget.receiveSerialData === 'function') {
             widget.receiveSerialData(data);
+        }
+    }
+});
+
+socket.on('serial_telemetry', (data) => {
+    for (const widget of widget_list) {
+        if (typeof widget.receiveSerialTelemetry === 'function') {
+            widget.receiveSerialTelemetry(data);
         }
     }
 });
@@ -121,11 +131,12 @@ socket.on('uwb_status', (status) => {
     }
 });
 
-// Linhas da GS que não são medidas (tabela, respostas a comandos) vão para o Terminal.
-socket.on('serial_line', (payload) => {
-    if (!payload?.line) return;
+socket.on('uwb_data', (payload) => {
+    if (!payload || !payload.values) return;
+    latestUwbTelemetry = payload;
+    if (viewMode !== 'live') return;
     for (const widget of widget_list) {
-        if (typeof widget.appendSerialLine === 'function') widget.appendSerialLine(payload.line);
+        if (typeof widget.updateUwbTelemetry === 'function') widget.updateUwbTelemetry(payload);
     }
 });
 
@@ -163,12 +174,13 @@ socket.on('historical_error', (error) => {
 
 function updateWidgets(data_source) {
     for (let widget of widget_list) {
+        if (viewMode === 'live' && typeof widget.updateUwbTelemetry === 'function') continue;
         widget.update(data_source);
     }
 }
 
-function sendSerialCommand(command, callback) {
-    socket.timeout(5000).emit('serial_command', { command }, (error, response) => {
+function sendSerialCommand(command, callback, target = 'main') {
+    socket.timeout(5000).emit('serial_command', { command, target }, (error, response) => {
         callback(error ? {
             ok: false,
             message: 'Tempo limite excedido ao enviar o comando.'
@@ -177,6 +189,23 @@ function sendSerialCommand(command, callback) {
             message: 'O backend não confirmou o envio do comando.'
         });
     });
+}
+
+function commandTerminals(target = 'main') {
+    const terminals = widget_list.filter(widget => typeof widget.showCommandResult === 'function');
+    if (terminals.length) return terminals;
+    const terminal = registerWidget(new terminalWidget('Terminal', 'workspace', undefined, sendSerialCommand));
+    terminal.applyState({ serialTarget: target });
+    terminal.render();
+    return [terminal];
+}
+
+function sendPanelCommand(command, callback, target = 'main') {
+    commandTerminals(target).forEach(terminal => terminal.showCommandSent(command, target));
+    sendSerialCommand(command, response => {
+        commandTerminals(target).forEach(terminal => terminal.showCommandResult(response, target));
+        callback(response);
+    }, target);
 }
 
 function clearWidgetData() {
@@ -330,6 +359,9 @@ function registerWidget(widget) {
     if (typeof widget.setManeuverRequester === 'function') widget.setManeuverRequester(requestManeuver);
     if (latestUwbStatus && typeof widget.updateUwbStatus === 'function') widget.updateUwbStatus(latestUwbStatus);
     if (latestManeuver && typeof widget.updateManeuver === 'function') widget.updateManeuver(latestManeuver);
+    if (viewMode === 'live' && latestUwbTelemetry && typeof widget.updateUwbTelemetry === 'function') {
+        widget.updateUwbTelemetry(latestUwbTelemetry);
+    }
 
     widget.closeWidget.addEventListener('click', () => {
         const index = widget_list.indexOf(widget);
@@ -355,7 +387,7 @@ function clearWorkspace() {
 function createWidgetFromSpec(spec) {
     return restoreWidgetFromSpec(spec, {
         containerId: 'workspace',
-        data: current_data,
+        data: spec.type === 'constellation' ? (latestUwbTelemetry || {}) : current_data,
         sendCommand: sendSerialCommand
     });
 }
@@ -723,7 +755,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const createConstellationBtn = document.getElementById('constellationButton');
     if (createConstellationBtn) {
         createConstellationBtn.addEventListener('click', () => {
-            const widget = registerWidget(new ConstellationWidget('Constelação 3D', 'workspace', current_data));
+            const widget = registerWidget(new ConstellationWidget('Constelação 3D', 'workspace', latestUwbTelemetry || {}));
             widget.render();
         });
     }
@@ -882,7 +914,7 @@ const historyControls = document.getElementById('history-controls');
     );
 
     await fetchModesFromServer();
-    initCommandPanel(sendSerialCommand);
+    initCommandPanel(sendPanelCommand);
     let selectedMode;
     try {
         selectedMode = JSON.parse(localStorage.getItem(selectedModeStorageKey));

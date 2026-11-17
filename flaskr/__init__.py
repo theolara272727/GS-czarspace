@@ -1,7 +1,6 @@
 from flask import Flask, render_template, jsonify, request, current_app
 import csv
 import json
-import re
 import serial 
 import threading
 import os
@@ -12,6 +11,8 @@ from contextlib import closing
 from flask_socketio import SocketIO, emit
 from datetime import datetime, timezone
 from . import uwb
+from .serial_ports import SerialPorts, validate_target
+from .telemetry import _normalize_mode_code, _normalize_timestamp, parse_serial_message
 
 CSV_FIELDS = (
     'timestamp', 'collection_timestamp', 'received_timestamp',
@@ -119,14 +120,15 @@ def _validate_commands(commands):
             raise ValueError('O comando deve ter entre 1 e 1024 caracteres.')
         if '\r' in command or '\n' in command:
             raise ValueError('Cadastre um comando por botão, sem quebras de linha.')
-        normalized.append({'name': name.strip(), 'command': command.strip()})
+        target = validate_target(item.get('target', 'main'), allow_both=True)
+        normalized.append({'name': name.strip(), 'command': command.strip(), 'target': target})
     return normalized
 
 
 def _load_commands(app):
     path = os.path.join(app.instance_path, 'commands.json')
     if not os.path.exists(path):
-        return [{'name': 'iniciar', 'command': 'G 00 {timestamp}'}]
+        return [{'name': 'iniciar', 'command': 'G 00 {timestamp}', 'target': 'main'}]
     with open(path, 'r', encoding='utf-8') as file:
         return _validate_commands(json.load(file)['commands'])
 
@@ -144,33 +146,15 @@ def _save_commands(app, commands):
 #PORTA = 'COM3' #Porta de entrada de dados
 BAUD = 115200
 PORTA = 'COM14'
-# A conexão é aberta sob demanda em _get_serial_connection(), para que
-# leitura e envio de comandos compartilhem a mesma porta serial.
+# Cada canal abre sua própria conexão sob demanda em serial_ports.py.
 
 socketio = SocketIO()
 uwb_processor = uwb.ProcessadorUwb()
 uwb_status = {'fonte': 'off', 'conectado': False, 'porta': None, 'mensagem': ''}
 
 CSV_PATH = ""
-serial_connection = None
-serial_lock = threading.Lock()
 config_lock = threading.Lock()
 telemetry_lock = threading.RLock()
-
-
-def _normalize_mode_code(value):
-    if isinstance(value, int) and not isinstance(value, bool):
-        number = value
-    elif isinstance(value, str):
-        candidate = value.strip()
-        if not re.fullmatch(r'(?:0[xX])?[0-9a-fA-F]+', candidate):
-            raise ValueError('O código do modo deve ser hexadecimal (ex.: 0x01).')
-        number = int(candidate, 16)
-    else:
-        raise ValueError('O código do modo é obrigatório.')
-    if number < 0:
-        raise ValueError('O código do modo não pode ser negativo.')
-    return f'0x{number:X}'
 
 
 def _validate_modes(modes):
@@ -206,26 +190,38 @@ def create_app(test_config=None):
     app = Flask(__name__, instance_relative_config=True)
     global CSV_PATH
     CSV_PATH = os.path.join(app.instance_path, 'historico_voo.csv')
-    # Fonte da constelação UWB: 'simulado' (padrão, sem hardware), 'serial' (GS real) ou 'off'.
-    uwb_source = os.environ.get('GS_UWB', 'simulado').strip().lower()
-    default_baud = uwb.BAUD if uwb_source == 'serial' else BAUD
+    uwb_port = os.environ.get('UWB_SERIAL_PORT', 'COM15').strip()
+    uwb_source = os.environ.get('GS_UWB', 'serial' if uwb_port else 'off').strip().lower()
     app.config.from_mapping(
         SECRET_KEY='dev',
         TELEMETRY_CSV=CSV_PATH,
         UWB_SOURCE=uwb_source,
+        UWB_SERIAL_PORT=uwb_port,
+        UWB_SERIAL_BAUD=int(os.environ.get('UWB_SERIAL_BAUD', uwb.BAUD)),
+        UWB_SERIAL_READ_TIMEOUT=0.1,
+        UWB_SERIAL_COMMAND_NEWLINE=True,
+        UWB_AUTO_ENABLE_CSV=False,
+        UWB_TELEMETRY_CSV=os.path.join(app.instance_path, 'historico_uwb.csv'),
         UWB_RAW_LOG=os.path.join(app.instance_path, 'uwb_bruto.csv'),
         UWB_MANEUVER_LOG=os.path.join(app.instance_path, 'manobras.jsonl'),
         SERIAL_PORT=os.environ.get('SERIAL_PORT', PORTA),
-        SERIAL_BAUD=int(os.environ.get('SERIAL_BAUD', default_baud)),
+        SERIAL_BAUD=int(os.environ.get('SERIAL_BAUD', BAUD)),
         SERIAL_COMMAND_NEWLINE=True,
-        # Leitura curta para a thread UWB não segurar a porta enquanto o Terminal envia comandos.
-        SERIAL_READ_TIMEOUT=0.1 if uwb_source == 'serial' else 1,
+        SERIAL_READ_TIMEOUT=1,
         SERIAL_READER_ENABLED=True,
         # Temporário: emite telemetria simulada enquanto não há hardware conectado.
         SYNTHETIC_TELEMETRY_ENABLED=False,
         SYNTHETIC_TELEMETRY_INTERVAL=1.0,
     )
     app.config.from_mapping(test_config)
+    if app.config['UWB_SOURCE'] == 'simulado':
+        app.config['UWB_SOURCE'] = 'off'
+    if app.config['UWB_SOURCE'] not in ('off', 'serial', 'simulado'):
+        raise ValueError('GS_UWB deve ser off, serial ou simulado.')
+    if (app.config['UWB_SOURCE'] == 'serial' and not app.config['UWB_SERIAL_PORT']
+            and app.config.get('UWB_SERIAL_CONNECTION') is None):
+        raise ValueError('Configure UWB_SERIAL_PORT para usar a segunda porta serial.')
+    app.extensions['serial_ports'] = SerialPorts(app.config)
     socketio.init_app(app)
     os.makedirs(app.instance_path, exist_ok=True)
 
@@ -297,14 +293,12 @@ def create_app(test_config=None):
     CSV_PATH = app.config['TELEMETRY_CSV']
     init_telemetry_csv(app)
 
-    if app.config['UWB_SOURCE'] in ('simulado', 'serial'):
-        # A constelação UWB assume a telemetria: não liga o gerador genérico nem o
-        # leitor antigo, que disputariam a porta serial e o modo da GS.
+    if app.config['UWB_SOURCE'] == 'serial':
         uwb_thread = threading.Thread(
             target=run_uwb_loop, args=(app,), name='UwbThread', daemon=True
         )
         uwb_thread.start()
-    elif app.config['SYNTHETIC_TELEMETRY_ENABLED']:
+    if app.config['SYNTHETIC_TELEMETRY_ENABLED']:
         synthetic_thread = threading.Thread(
             target=emit_synthetic_data,
             args=(app,),
@@ -320,92 +314,23 @@ def create_app(test_config=None):
     return app
 
 
-def _normalize_timestamp(value):
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        seconds = value / 1000 if value > 10_000_000_000 else value
-        return datetime.fromtimestamp(seconds, timezone.utc).isoformat()
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError('A timestamp de coleta é obrigatória.')
-    candidate = value.strip()
-    if re.fullmatch(r'\d+(?:\.\d+)?', candidate):
-        numeric_value = float(candidate)
-        seconds = numeric_value / 1000 if numeric_value > 10_000_000_000 else numeric_value
-        return datetime.fromtimestamp(seconds, timezone.utc).isoformat()
-    parsed = datetime.fromisoformat(candidate.replace('Z', '+00:00'))
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc).isoformat()
-
-
-def parse_serial_message(raw_message, modes):
-    if isinstance(raw_message, bytes):
-        raw_message = raw_message.decode('utf-8')
-    if not isinstance(raw_message, str) or not raw_message.strip():
-        raise ValueError('Mensagem serial vazia.')
-
-    text = raw_message.strip()
-    if text.startswith('{'):
-        message = json.loads(text)
-        if not isinstance(message, dict):
-            raise ValueError('A mensagem de telemetria deve ser um objeto JSON.')
-        collected_at = message.get('timestamp', message.get('collectedAt'))
-        mode_code = message.get('modeCode', message.get('mode', message.get('code')))
-        values = message.get('values', message.get('data'))
-    else:
-        fields = text.split()
-        if len(fields) < 3:
-            raise ValueError('Formato esperado: timestamp código_hex valor1 valor2 ...')
-        collected_at, mode_code, *values = fields
-
-    if not isinstance(values, list):
-        raise ValueError('O campo "values" deve ser uma lista.')
-    normalized_code = _normalize_mode_code(mode_code)
-    mode = next((item for item in modes if item.get('code') == normalized_code), None)
-    if mode is None:
-        raise ValueError(f'Não existe configuração para o modo {normalized_code}.')
-    data_types = mode.get('dataTypes', [])
-    if len(values) != len(data_types):
-        raise ValueError(
-            f'O modo {normalized_code} espera {len(data_types)} valores, mas recebeu {len(values)}.'
-        )
-    try:
-        telemetry = {name: float(value) for name, value in zip(data_types, values)}
-    except (TypeError, ValueError) as error:
-        raise ValueError('Todos os valores de telemetria devem ser numéricos.') from error
-    # NaN e infinitos não são valores JSON válidos.
-    telemetry = {
-        name: value if math.isfinite(value) else None
-        for name, value in telemetry.items()
-    }
-
-    return {
-        'timestamp': _normalize_timestamp(collected_at),
-        'receivedTimestamp': datetime.now(timezone.utc).isoformat(),
-        'modeCode': normalized_code,
-        'modeName': mode.get('name', normalized_code),
-        'values': telemetry,
-    }
-
-
 def read_serial(app):
     """Interpreta telemetria e encaminha outras respostas ao terminal."""
-    with app.app_context():
-        with serial_lock:
-            connection = _get_serial_connection()
-            raw_message = connection.readline()
+    raw_message, source = app.extensions['serial_ports'].readline('main')
     if not raw_message:
         return None
     try:
         with config_lock:
             modes = _validate_modes(_load_modes(app))
-        return parse_serial_message(raw_message, modes)
+        telemetry = parse_serial_message(raw_message, modes)
+        telemetry['serialSource'] = source
+        return telemetry
     except (ValueError, TypeError, OverflowError):
         # Respostas fora do protocolo aparecem somente no terminal.
         socketio.emit('serial_received', {
             'text': raw_message.decode('utf-8', errors='replace'),
             'hex': raw_message.hex(),
-            'port': getattr(connection, 'port', app.config.get('SERIAL_PORT')),
-            'baud': getattr(connection, 'baudrate', app.config.get('SERIAL_BAUD')),
+            **source,
         })
         return None
 # tempo_simulacao = 0.0
@@ -548,30 +473,41 @@ def _set_uwb_status(**changes):
     socketio.emit('uwb_status', dict(uwb_status))
 
 
-def _close_serial_connection():
-    global serial_connection
-    with serial_lock:
-        if serial_connection is not None:
-            try:
-                serial_connection.close()
-            except (serial.SerialException, OSError):
-                pass
-        serial_connection = None
-
-
 def _uwb_read_line(app, buffer):
     """Lê o que houver na serial e devolve as linhas completas (sem quebrar medidas ao meio)."""
-    with app.app_context():
-        with serial_lock:
-            connection = _get_serial_connection()
-            chunk = connection.readline()
+    chunk, source = app.extensions['serial_ports'].readline('uwb')
     if chunk:
         buffer.extend(chunk)
     lines = []
     while b'\n' in buffer:
         raw, _, rest = bytes(buffer).partition(b'\n')
         buffer[:] = rest
-        lines.append(raw.decode('utf-8', errors='ignore').strip())
+        line = raw.decode('utf-8', errors='replace').strip()
+        lines.append(line)
+        try:
+            with config_lock:
+                modes = _validate_modes(_load_modes(app))
+        except ValueError:
+            modes = []
+        packet = uwb.parse_serial_line(line, modes)
+        if packet is not None:
+            uwb_processor.processa_telemetria(packet)
+            _append_line(app.config['UWB_RAW_LOG'], packet['raw'])
+            socketio.emit('serial_telemetry', {
+                'timestamp': packet['timestamp'],
+                'receivedTimestamp': packet['receivedTimestamp'],
+                'deviceTimestamp': packet['deviceTimestamp'],
+                'modeCode': packet['modeCode'],
+                'modeName': packet['modeName'],
+                'values': packet['values'],
+                'serialSource': source,
+            })
+        else:
+            socketio.emit('serial_received', {
+                'text': (raw + b'\n').decode('utf-8', errors='replace'),
+                'hex': (raw + b'\n').hex(),
+                **source,
+            })
     return lines
 
 
@@ -579,13 +515,7 @@ def _uwb_enable_csv(app, buffer):
     """Liga o modo CSV da GS (o comando V alterna ON/OFF). Devolve as linhas lidas no caminho."""
     seen = []
     for _ in range(2):
-        with app.app_context():
-            with serial_lock:
-                connection = _get_serial_connection()
-                connection.reset_input_buffer()
-                connection.write(b'V\n')
-                connection.flush()
-        buffer.clear()
+        app.extensions['serial_ports'].write('uwb', b'V\n')
         started = time.time()
         while time.time() - started < 2.0:
             for line in _uwb_read_line(app, buffer):
@@ -602,39 +532,38 @@ def _uwb_enable_csv(app, buffer):
 
 def _uwb_serial_lines(app):
     """Gera as linhas da GS real, reconectando sozinho se a porta cair."""
-    port = app.config['SERIAL_PORT']
+    port = app.config['UWB_SERIAL_PORT']
+    ports = app.extensions['serial_ports']
     buffer = bytearray()
     while True:
         try:
-            with app.app_context():
-                with serial_lock:
-                    _get_serial_connection()
+            ports.open('uwb')
+            revision = ports.revision('uwb')
             _set_uwb_status(fonte='serial', conectado=True, porta=port,
                             mensagem=f'Conectado em {port}. Aguardando a GS reiniciar...')
             time.sleep(2.5)  # abrir a porta reseta o ESP32
-            ok, seen = _uwb_enable_csv(app, buffer)
-            _set_uwb_status(mensagem='Modo CSV da GS ligado.' if ok else
-                            "Não confirmei o modo CSV. Envie 'V' pelo Terminal se não chegarem dados.")
-            yield from seen
+            if app.config['UWB_AUTO_ENABLE_CSV']:
+                ok, seen = _uwb_enable_csv(app, buffer)
+                _set_uwb_status(mensagem='Modo CSV da GS ligado.' if ok else
+                                "Não confirmei o modo CSV. Envie 'V' pela porta UWB se não chegarem dados.")
+                yield from seen
+            else:
+                _set_uwb_status(mensagem='Recebendo telemetria DW1000.')
             while True:
+                if ports.revision('uwb') != revision:
+                    raise serial.SerialException('Conexão UWB alterada; reinicializando recepção.')
                 lines = _uwb_read_line(app, buffer)
                 if not lines:
                     yield None
                 yield from lines
         except (serial.SerialException, OSError) as error:
-            _close_serial_connection()
+            ports.close('uwb')
             buffer.clear()
             _set_uwb_status(fonte='serial', conectado=False, porta=port,
                             mensagem=f'Sem conexão com {port}: {error}. Tentando de novo...')
             app.logger.warning('UWB: falha na porta %s: %s', port, error)
             time.sleep(2)
             yield None
-
-
-def _uwb_simulated_lines():
-    simulator = uwb.SimuladorUwb()
-    while True:
-        yield simulator.proxima_linha()
 
 
 def _append_line(path, text):
@@ -661,31 +590,25 @@ def run_uwb_evaluation(app, forcar=False):
 
 def run_uwb_loop(app):
     source = app.config['UWB_SOURCE']
-    if source == 'serial':
-        lines = _uwb_serial_lines(app)
-        raw_log = app.config['UWB_RAW_LOG']
-    else:
-        _set_uwb_status(fonte='simulado', conectado=True, porta=None,
-                        mensagem='Dados UWB simulados (sem hardware).')
-        lines = _uwb_simulated_lines()
-        raw_log = None
+    if source != 'serial':
+        return
+    lines = _uwb_serial_lines(app)
 
     next_telemetry = time.time() + uwb.PERIODO_TELEMETRIA_S
     next_evaluation = time.time() + uwb.PERIODO_S
-    for line in lines:
-        if line:
-            measurement = uwb_processor.processa_linha(line)
-            if measurement and raw_log:
-                _append_line(raw_log, measurement)
-            elif not measurement and source == 'serial':
-                socketio.emit('serial_line', {'line': line})
-
+    for _line in lines:
         now = time.time()
         if now >= next_telemetry:
             dados = uwb_processor.telemetria()
             if dados:
-                save_telemetry(dados)
-                socketio.emit('new_data', dados)
+                dados['serialSource'] = {
+                    'target': 'uwb',
+                    'port': app.config['UWB_SERIAL_PORT'] if source == 'serial' else None,
+                    'baud': app.config['UWB_SERIAL_BAUD'],
+                    'simulated': source == 'simulado',
+                }
+                save_telemetry(dados, csv_path=app.config['UWB_TELEMETRY_CSV'])
+                socketio.emit('uwb_data', dados)
             next_telemetry = now + uwb.PERIODO_TELEMETRIA_S
         if now >= next_evaluation:
             run_uwb_evaluation(app)
@@ -695,7 +618,7 @@ def run_uwb_loop(app):
 @socketio.on('manobra_solicitar')
 def handle_maneuver_request(payload):
     forcar = bool(payload.get('forcar')) if isinstance(payload, dict) else False
-    if current_app.config.get('UWB_SOURCE') not in ('simulado', 'serial'):
+    if current_app.config.get('UWB_SOURCE') != 'serial':
         return {'ok': False, 'message': 'A constelação UWB está desligada (GS_UWB=off).'}
     resultado = run_uwb_evaluation(current_app._get_current_object(), forcar=forcar)
     if resultado is None:
@@ -711,25 +634,6 @@ def init_connection():
         emit('manobra', uwb_processor.ultimo_resultado)
 
 
-def _get_serial_connection():
-    global serial_connection
-
-    configured_connection = current_app.config.get('SERIAL_CONNECTION')
-    if configured_connection is not None:
-        return configured_connection
-
-    port = current_app.config['SERIAL_PORT']
-    baud = current_app.config['SERIAL_BAUD']
-    if serial_connection is None or not serial_connection.is_open:
-        serial_connection = serial.Serial(
-            port=port,
-            baudrate=baud,
-            timeout=current_app.config.get('SERIAL_READ_TIMEOUT', 1),
-            write_timeout=1
-        )
-    return serial_connection
-
-
 @socketio.on('serial_command')
 def handle_serial_command(payload):
     command = payload.get('command', '') if isinstance(payload, dict) else ''
@@ -738,43 +642,44 @@ def handle_serial_command(payload):
     if len(command) > 1024:
         return {'ok': False, 'message': 'O comando deve possuir no máximo 1024 caracteres.'}
 
-    if current_app.config.get('UWB_SOURCE') == 'simulado':
-        return {
-            'ok': False,
-            'message': 'Modo simulado: não há porta serial. Rode com GS_UWB=serial para falar com a GS.'
-        }
+    try:
+        target = validate_target(payload.get('target', 'main'), allow_both=True)
+    except ValueError as error:
+        return {'ok': False, 'message': str(error)}
 
     command = command.rstrip('\r\n')
-    if current_app.config.get('SERIAL_COMMAND_NEWLINE', True):
-        command += '\n'
+    targets = ('main', 'uwb') if target == 'both' else (target,)
+    results = []
+    for destination in targets:
+        newline_key = 'SERIAL_COMMAND_NEWLINE' if destination == 'main' else 'UWB_SERIAL_COMMAND_NEWLINE'
+        encoded_command = (command + ('\n' if current_app.config.get(newline_key, True) else '')).encode('utf-8')
+        try:
+            bytes_written, source = current_app.extensions['serial_ports'].write(destination, encoded_command)
+            port, baud = source['port'], source['baud']
+            results.append({
+                'target': destination,
+                'ok': True,
+                'message': f'Escrito em {port} a {baud} baud ({bytes_written} bytes)',
+            })
+        except (serial.SerialException, OSError) as error:
+            results.append({
+                'target': destination,
+                'ok': False,
+                'message': f'Falha ao enviar pela porta serial: {error}',
+            })
+    labels = {'main': 'Principal', 'uwb': 'DW1000'}
+    return {
+        'ok': all(result['ok'] for result in results),
+        'message': results[0]['message'] if target != 'both' else '; '.join(
+            f"{labels[result['target']]}: {result['message']}" for result in results
+        ),
+        'results': results,
+    }
 
-    try:
-        encoded_command = command.encode('utf-8')
-        with serial_lock:
-            connection = _get_serial_connection()
-            bytes_written = connection.write(encoded_command)
-            if bytes_written != len(encoded_command):
-                raise serial.SerialTimeoutException(
-                    f'Envio incompleto: {bytes_written} de {len(encoded_command)} bytes.'
-                )
-            connection.flush()
-            port = getattr(connection, 'port', current_app.config.get('SERIAL_PORT'))
-            baud = getattr(connection, 'baudrate', current_app.config.get('SERIAL_BAUD'))
-        return {
-            'ok': True,
-            'message': (
-                f'Escrito em {port} a {baud} baud ({bytes_written} bytes)'
-            )
-        }
-    except (serial.SerialException, OSError) as error:
-        return {
-            'ok': False,
-            'message': f'Falha ao enviar pela porta serial: {error}'
-        }
 
 
-
-def save_telemetry(dados_recebidos):
+def save_telemetry(dados_recebidos, csv_path=None):
+    csv_path = CSV_PATH if csv_path is None else csv_path
     try:
         received_at = dados_recebidos.get(
             'receivedTimestamp', datetime.now(timezone.utc).isoformat()
@@ -802,8 +707,8 @@ def save_telemetry(dados_recebidos):
             return
 
         with telemetry_lock:
-            needs_header = not os.path.exists(CSV_PATH) or os.path.getsize(CSV_PATH) == 0
-            with open(CSV_PATH, 'a', encoding='utf-8', newline='') as csv_file:
+            needs_header = not os.path.exists(csv_path) or os.path.getsize(csv_path) == 0
+            with open(csv_path, 'a', encoding='utf-8', newline='') as csv_file:
                 writer = csv.DictWriter(csv_file, fieldnames=CSV_FIELDS)
                 if needs_header:
                     writer.writeheader()

@@ -154,6 +154,12 @@
                     <input id="commandName" name="name" maxlength="80" required>
                     <label for="commandText">Comando serial</label>
                     <input id="commandText" name="command" maxlength="1024" required autocomplete="off">
+                    <label for="commandTarget">Porta de destino</label>
+                    <select id="commandTarget" name="target">
+                        <option value="main">Principal</option>
+                        <option value="uwb">DW1000</option>
+                        <option value="both">Ambas</option>
+                    </select>
                     <button class="action-btn" type="submit">Salvar comando</button>
                 </form>
             </div>

@@ -96,6 +96,10 @@ class ConstellationWidget extends BaseWidget {
         if (initialData) this.update(initialData);
     }
 
+    updateUwbTelemetry(payload) {
+        this.update(payload);
+    }
+
     initThree() {
         this.scene = new THREE.Scene();
         this.scene.background = new THREE.Color(0x0a0e17);
@@ -532,6 +536,7 @@ class ConstellationWidget extends BaseWidget {
     }
 
     update(newData) {
+        newData = newData?.values ?? newData;
         super.update(newData);
         if (!newData) return;
         if (!['dA1', 'dA2', 'dA3', 'd12', 'd13', 'd23'].some((key) => newData[key] != null)) {
@@ -568,14 +573,6 @@ class ConstellationWidget extends BaseWidget {
         // Invertemos o sinal para garantir que fique do lado oposto ao Satélite 2
         const baseY3 = -Math.sqrt(Math.max(0, dA3 ** 2 - baseX3 ** 2)); 
         
-        let t = Date.now() / 10000; // Velocidade da órbita
-        const cosT = Math.cos(t);
-        const sinT = Math.sin(t);
-
-        // Matriz de Rotação 2D
-        const rotX = (x, y) => x * cosT - y * sinT;
-        const rotY = (x, y) => x * sinT + y * cosT;
-
         // As medidas da bancada são de ~1 m, menores que os próprios cubos (4 unidades).
         // Normaliza a cena para que o nó mais distante da GS fique a DISPLAY_RADIUS unidades;
         // as distâncias reais continuam no HUD.
@@ -583,10 +580,10 @@ class ConstellationWidget extends BaseWidget {
         const maxRadius = Math.max(dA1, dA2, dA3, 1e-6);
         const k = DISPLAY_RADIUS / maxRadius;
 
-        // Aplica as novas posições orbitais aos satélites
-        this.sats[1].userData.targetPosition.set(k * rotX(baseX1, baseY1), k * rotY(baseX1, baseY1), 0);
-        this.sats[2].userData.targetPosition.set(k * rotX(baseX2, baseY2), k * rotY(baseX2, baseY2), 0);
-        this.sats[3].userData.targetPosition.set(k * rotX(baseX3, baseY3), k * rotY(baseX3, baseY3), 0);
+        // Posições relativas calculadas somente a partir das distâncias recebidas.
+        this.sats[1].userData.targetPosition.set(k * baseX1, k * baseY1, 0);
+        this.sats[2].userData.targetPosition.set(k * baseX2, k * baseY2, 0);
+        this.sats[3].userData.targetPosition.set(k * baseX3, k * baseY3, 0);
 
         if (this.isAutoZoomEnabled) {
             this.adjustCameraZoom();

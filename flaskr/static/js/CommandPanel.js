@@ -11,6 +11,7 @@ export default function initCommandPanel(sendCommand) {
     const form = document.getElementById('commandCreateForm');
     const nameInput = document.getElementById('commandName');
     const commandInput = document.getElementById('commandText');
+    const targetInput = document.getElementById('commandTarget');
     let commands = [];
     let loaded = false;
     let busy = false;
@@ -22,7 +23,7 @@ export default function initCommandPanel(sendCommand) {
 
     function setBusy(value) {
         busy = value;
-        panel.querySelectorAll('.commands-content button, .commands-content input')
+        panel.querySelectorAll('.commands-content button, .commands-content input, .commands-content select')
             .forEach(element => { element.disabled = value; });
     }
 
@@ -75,14 +76,25 @@ export default function initCommandPanel(sendCommand) {
                 if (busy) return;
                 const command = expandCommand(item.command);
                 setBusy(true);
-                setStatus(`Enviando: ${command}`);
-                sendCommand(command, response => {
-                    setStatus(
-                        `${response?.ok ? 'OK' : 'Erro'}: ${response?.message || 'Sem resposta do backend.'}`,
-                        response?.ok !== true
-                    );
+                setStatus('');
+                sendCommand(command, () => {
                     setBusy(false);
-                });
+                }, item.target || 'main');
+            });
+            const target = document.createElement('select');
+            target.className = 'command-target';
+            target.setAttribute('aria-label', `Porta de destino de ${item.name}`);
+            for (const [value, text] of [['main', 'Principal'], ['uwb', 'DW1000'], ['both', 'Ambas']]) {
+                const option = document.createElement('option');
+                option.value = value;
+                option.textContent = text;
+                target.appendChild(option);
+            }
+            target.value = item.target || 'main';
+            target.addEventListener('change', async () => {
+                const next = commands.map((command, position) => position === index
+                    ? { ...command, target: target.value } : command);
+                if (!await saveCommands(next)) render();
             });
             const remove = document.createElement('button');
             remove.type = 'button';
@@ -95,7 +107,7 @@ export default function initCommandPanel(sendCommand) {
                     saveCommands(commands.filter((_, position) => position !== index));
                 }
             });
-            row.append(send, remove);
+            row.append(send, target, remove);
             list.appendChild(row);
         });
     }
@@ -137,6 +149,7 @@ export default function initCommandPanel(sendCommand) {
         const name = nameInput.value.trim();
         const command = commandInput.value.trim();
         if (!name || !command) return;
-        if (await saveCommands([...commands, { name, command }])) form.reset();
+        const target = targetInput.value;
+        if (await saveCommands([...commands, { name, command, target }])) form.reset();
     });
 }

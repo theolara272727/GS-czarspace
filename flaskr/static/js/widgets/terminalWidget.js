@@ -7,6 +7,7 @@ class rawDataWidget extends BaseWidget{
         this.data = data;
         this.sendCommand = sendCommand;
         this.lineCounter = 0;
+        this.serialTarget = 'main';
 
         this.content.style.display = 'flex';
         this.content.style.flexDirection = 'column';
@@ -52,6 +53,21 @@ class rawDataWidget extends BaseWidget{
         this.commandButton.style.borderRadius = '4px';
         this.commandButton.style.cursor = 'pointer';
 
+        this.targetSelect = document.createElement('select');
+        this.targetSelect.setAttribute('aria-label', 'Porta de envio e recepção');
+        this.targetSelect.title = 'Porta de envio e recepção';
+        for (const [value, text] of [['main', 'Principal'], ['uwb', 'DW1000'], ['both', 'Ambas']]) {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = text;
+            this.targetSelect.appendChild(option);
+        }
+        this.targetSelect.value = this.serialTarget;
+        this.targetSelect.addEventListener('change', () => {
+            this.serialTarget = this.targetSelect.value;
+            this.filterVisibleLines();
+        });
+        this.commandForm.appendChild(this.targetSelect);
         this.commandForm.appendChild(this.commandInput);
         this.commandForm.appendChild(this.commandButton);
         this.content.appendChild(this.output);
@@ -69,8 +85,15 @@ class rawDataWidget extends BaseWidget{
     serialize() {
         return {
             ...super.serialize(),
-            type: this.getKind()
+            type: this.getKind(),
+            serialTarget: this.serialTarget
         };
+    }
+
+    applyState(state = {}) {
+        this.serialTarget = ['uwb', 'both'].includes(state.serialTarget) ? state.serialTarget : 'main';
+        this.targetSelect.value = this.serialTarget;
+        this.filterVisibleLines();
     }
 
     submitCommand() {
@@ -83,37 +106,73 @@ class rawDataWidget extends BaseWidget{
 
     sendTerminalCommand(command) {
         if (this.commandButton.disabled) return;
-        this.appendLine(`> ${command}`, 'command');
+        const target = this.serialTarget;
+        this.showCommandSent(command, target);
 
         if (typeof this.sendCommand !== 'function') {
-            this.appendLine('Erro: envio serial indisponível.', 'error');
+            this.appendLine('Erro: envio serial indisponível.', 'error', target);
             return;
         }
 
         this.commandInput.disabled = true;
         this.commandButton.disabled = true;
+        this.targetSelect.disabled = true;
         this.sendCommand(command, (response) => {
-            const succeeded = response?.ok === true;
-            this.appendLine(
-                `${succeeded ? 'OK' : 'Erro'}: ${response?.message || 'Sem resposta do backend.'}`,
-                succeeded ? 'success' : 'error'
-            );
+            this.showCommandResult(response, target);
             this.commandInput.disabled = false;
             this.commandButton.disabled = false;
+            this.targetSelect.disabled = false;
             this.commandInput.focus();
-        });
+        }, target);
+    }
+
+    showCommandSent(command, target = 'main') {
+        const label = { main: 'Principal', uwb: 'DW1000', both: 'Ambas' }[target];
+        this.appendLine(`> [${label}] ${command}`, 'command', target);
+    }
+
+    showCommandResult(response, target = 'main') {
+        const results = Array.isArray(response?.results) && response.results.length
+            ? response.results : [{ ...response, target }];
+        for (const result of results) {
+            const succeeded = result.ok === true;
+            const label = results.length > 1
+                ? `[${result.target === 'uwb' ? 'DW1000' : 'Principal'}] ` : '';
+            this.appendLine(
+                `${succeeded ? 'OK' : 'Erro'}: ${label}${result.message || 'Sem resposta do backend.'}`,
+                succeeded ? 'success' : 'error',
+                result.target || target
+            );
+        }
     }
 
     receiveSerialData(data) {
         if (typeof data?.text !== 'string') return;
         this.appendLine(
-            `[RX ${data.port} / ${data.baud} baud] ${JSON.stringify(data.text)}`,
-            'serial'
+            `[RX ${data.target === 'uwb' ? 'DW1000' : 'Principal'} · ${data.port} / ${data.baud} baud] ${JSON.stringify(data.text)}`,
+            'serial',
+            data.target || 'main'
         );
     }
 
-    appendLine(text, kind = 'telemetry') {
+    receiveSerialTelemetry(data) {
+        this.update(data);
+    }
+
+    acceptsSource(target) {
+        return this.serialTarget === 'both' || target === 'both' || this.serialTarget === target;
+    }
+
+    filterVisibleLines() {
+        for (const line of this.output.children) {
+            line.hidden = !this.acceptsSource(line.dataset.serialTarget || 'main');
+        }
+    }
+
+    appendLine(text, kind = 'telemetry', target = 'main') {
         const newLine = document.createElement('span');
+        newLine.dataset.serialTarget = target;
+        newLine.hidden = !this.acceptsSource(target);
         newLine.className = `widgetLine terminal-line-${kind}`;
         newLine.style.whiteSpace = kind === 'device' ? 'pre' : 'nowrap';
         newLine.style.fontFamily = 'monospace';
@@ -138,11 +197,6 @@ class rawDataWidget extends BaseWidget{
         }
     }
 
-    // Texto impresso pela GS (tabela de pares, "CSV bruto: ON", respostas a comandos)
-    appendSerialLine(text) {
-        this.appendLine(`< ${text}`, 'device');
-    }
-
     update(new_data){
         const payload = new_data || this.data;
         if(payload != undefined){
@@ -151,14 +205,17 @@ class rawDataWidget extends BaseWidget{
             const timeString = Number.isNaN(timestamp.getTime())
                 ? String(payload.timestamp)
                 : timestamp.toLocaleTimeString();
-            let line = "[" + timeString + "]"
+            const source = payload.serialSource;
+            let line = source
+                ? `[${timeString}] [RX ${source.target === 'uwb' ? 'DW1000' : 'Principal'} · ${source.port}]`
+                : `[${timeString}]`;
             const dataSource = payload.values !== undefined ? payload.values : payload;
             for (const [key, value] of Object.entries(dataSource)){
-                if (key === 'timestamp' || key === 'values') continue;
-                let formatted = typeof value === 'number' ? value.toFixed(2) : value;
+                if (['timestamp', 'values', 'serialSource', 'collectionTimestamp', 'receivedTimestamp', 'modeCode'].includes(key)) continue;
+                let formatted = value == null ? '—' : typeof value === 'number' ? value.toFixed(2) : value;
                 line += ` ${key}: ${formatted} |`;
             }
-            this.appendLine(line);
+            this.appendLine(line, 'telemetry', source?.target || 'main');
             this.lineCounter++
         }
     }
