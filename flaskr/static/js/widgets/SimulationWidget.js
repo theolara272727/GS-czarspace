@@ -24,12 +24,39 @@ const EXAGERO = 0.5;         // unidades de tela por km de altitude
 const R_TERRA_TELA = 40;     // a Terra é só referência visual (fora de escala)
 
 const LIMITES_DIST = [1000, 2000];
+const COR_DV = 0xef4444;          // seta do impulso (ΔV)
+const COR_VEL = 0xe2e8f0;         // seta de velocidade
+const JANELA_IMPULSO_H = 0.25;    // a seta do ΔV fica destacada por ±15 min de missão
+const COMPRIMENTO_VEL = 12;       // seta de velocidade (só direção) [unidades de tela]
 const LIMITES_ALT = [300, 450];
 
 function esc(value) {
     return String(value ?? '').replace(/[&<>"']/g, (c) => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
     }[c]));
+}
+
+// Seta 3D com espessura (as linhas do WebGL têm 1 px). Aponta para +Y; use apontaSeta().
+function criarSeta(cor, comprimento, raio) {
+    const material = new THREE.MeshBasicMaterial({ color: cor, transparent: true, depthTest: false });
+    const ponta = Math.min(comprimento * 0.4, raio * 7);
+    const haste = new THREE.Mesh(new THREE.CylinderGeometry(raio, raio, comprimento - ponta, 8), material);
+    haste.position.y = (comprimento - ponta) / 2;
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(raio * 2.6, ponta, 14), material);
+    cone.position.y = comprimento - ponta / 2;
+    const seta = new THREE.Group();
+    seta.add(haste, cone);
+    seta.renderOrder = 10;
+    haste.renderOrder = 10;
+    cone.renderOrder = 10;
+    seta.userData.material = material;
+    return seta;
+}
+
+const EIXO_Y = new THREE.Vector3(0, 1, 0);
+function apontaSeta(seta, origem, direcao) {
+    seta.position.copy(origem);
+    seta.quaternion.setFromUnitVectors(EIXO_Y, direcao);
 }
 
 function normalizaAngulo(a) {
@@ -53,6 +80,9 @@ class SimulationWidget extends BaseWidget {
         this.lastChartUpdate = 0;
         this.isRunning = true;
         this.objects = {};
+        this.visible = { Gabriella: true, Beatriz: true, Carolina: true };
+        this.showVectors = false;
+        this.pauseOnBurns = true;
 
         this.element.classList.add('simulation-widget');
         this.element.style.width = '1100px';
@@ -106,6 +136,29 @@ class SimulationWidget extends BaseWidget {
             sats.map((sat) => this.planSelect(sat)).join('') +
             `<span class="sim-status" data-role="status"></span>`;
 
+        this.options = document.createElement('div');
+        this.options.className = 'sim-options';
+        const nomesVisiveis = ['Gabriella', ...sats.map((sat) => sat.nome)];
+        this.options.innerHTML = `<span class="sim-opt-title">MOSTRAR</span>` +
+            nomesVisiveis.map((nome) => `
+                <label class="sim-check" style="--sat:${CSS(CORES[nome])}">
+                    <input type="checkbox" data-visible="${esc(nome)}" checked> ${esc(nome)}
+                </label>`).join('') + `
+            <span class="sim-sep"></span>
+            <label class="sim-check sim-check-vec" title="Seta de velocidade em cada satélite e seta do ΔV em cada impulso">
+                <input type="checkbox" data-role="vectors"> VETORES (velocidade e ΔV)
+            </label>
+            <label class="sim-check" data-role="pause-wrap" title="Pausa a animação no instante de cada impulso">
+                <input type="checkbox" data-role="pause-burns" checked> pausar em cada impulso
+            </label>`;
+        this.options.addEventListener('change', (e) => {
+            const nome = e.target.dataset.visible;
+            if (nome) this.visible[nome] = e.target.checked;
+            if (e.target.dataset.role === 'vectors') this.showVectors = e.target.checked;
+            if (e.target.dataset.role === 'pause-burns') this.pauseOnBurns = e.target.checked;
+            this.applyVisibility();
+        });
+
         this.main = document.createElement('div');
         this.main.className = 'sim-main';
 
@@ -120,6 +173,8 @@ class SimulationWidget extends BaseWidget {
             <span><i class="dash" style="border-color:#94a3b8"></i>percurso planejado</span>
             <span><i class="dot"></i>impulso</span>
             <span><i class="box"></i>posição-alvo</span>
+            <span class="sim-legend-vec"><i class="arrow" style="--c:#e2e8f0"></i>velocidade (direção)</span>
+            <span class="sim-legend-vec"><i class="arrow" style="--c:${CSS(COR_DV)}"></i>impulso ΔV (tamanho ∝ intensidade)</span>
             <span class="sim-muted">altitude exagerada ×${Math.round(EXAGERO * 6771 / R_ORBITA)} · ângulos reais</span>`;
         this.burnList = document.createElement('div');
         this.burnList.className = 'sim-burns';
@@ -140,9 +195,9 @@ class SimulationWidget extends BaseWidget {
         this.chartsCol.append(this.distBox, this.altBox);
 
         this.main.append(this.view, this.chartsCol);
-        this.content.append(this.toolbar, this.plans, this.main);
+        this.content.append(this.toolbar, this.plans, this.options, this.main);
 
-        for (const el of [this.toolbar, this.plans]) {
+        for (const el of [this.toolbar, this.plans, this.options]) {
             el.addEventListener('mousedown', (e) => e.stopPropagation());
         }
         this.toolbar.addEventListener('click', (e) => {
@@ -159,7 +214,7 @@ class SimulationWidget extends BaseWidget {
             this.frame = e.target.value;
             this.buildPaths();
             this.placeCamera();
-            this.renderFrame();
+            this.applyVisibility();   // os percursos/vetores recriados respeitam o que está oculto
         });
         this.plans.addEventListener('change', (e) => {
             if (e.target.dataset.sat) this.requestSimulation();
@@ -225,7 +280,9 @@ class SimulationWidget extends BaseWidget {
         this.buildScene();
         this.loadCharts();
         this.placeCamera();
-        this.playing = true;
+        this.applyVisibility();
+        // com os vetores ligados, começa pausado se já houver impulso em t = 0
+        this.playing = !(this.showVectors && this.pauseOnBurns && this.burnAt(-1, 0));
         this.renderFrame();
     }
 
@@ -323,7 +380,10 @@ class SimulationWidget extends BaseWidget {
             label.style.color = CSS(CORES[nome]);
             label.textContent = nome;
             this.labels.appendChild(label);
-            return { mesh, label };
+            const velArrow = criarSeta(COR_VEL, COMPRIMENTO_VEL, 0.35);
+            velArrow.visible = false;
+            this.dynamic.add(velArrow);
+            return { mesh, label, velArrow, speed: null };
         };
 
         this.objects.Gabriella = makeSat('Gabriella', 5);
@@ -349,7 +409,10 @@ class SimulationWidget extends BaseWidget {
         const dt = this.sim.dtAmostraS;
         for (const [nome, obj] of Object.entries(this.objects)) {
             if (!obj.data) continue;
-            for (const key of ['planned', 'trail', 'burns']) {
+            (obj.dvLabels || []).forEach((el) => el.remove());
+            obj.dvLabels = [];
+            obj.dvArrows = [];
+            for (const key of ['planned', 'trail', 'burns', 'dvGroup']) {
                 if (obj[key]) {
                     this.dynamic.remove(obj[key]);
                     obj[key].traverse?.((o) => { o.geometry?.dispose?.(); o.material?.dispose?.(); });
@@ -380,11 +443,91 @@ class SimulationWidget extends BaseWidget {
                 dot.position.copy(p);
                 burns.add(dot);
             }
+            // Seta do ΔV no ponto de cada impulso, com a direção real do impulso no
+            // referencial local (tangencial = prógrado/retrógrado, radial = para fora/dentro).
+            const dvGroup = new THREE.Group();
+            obj.data.impulsos.forEach((imp, k) => {
+                const a = Math.atan2(imp.y, imp.x) + this.offsetFrame(imp.tH * 3600);
+                const dir = this.direcaoLocal(a, imp.dvTan ?? imp.dv, imp.dvRad ?? 0);
+                const comprimento = 6 + 6 * Math.log2(1 + imp.dv);
+                const origem = burns.children[k].position.clone();
+                const arrow = criarSeta(COR_DV, comprimento, 0.7);
+                apontaSeta(arrow, origem, dir);
+                dvGroup.add(arrow);
+                const label = document.createElement('span');
+                label.className = 'sim-label sim-dv-label';
+                label.textContent = `ΔV ${imp.dv.toFixed(1)} m/s · ${this.descreveImpulso(imp)}`;
+                this.labels.appendChild(label);
+                obj.dvArrows.push({ arrow, imp, tip: origem.clone().addScaledVector(dir, comprimento), ativo: false });
+                obj.dvLabels.push(label);
+            });
+
             obj.planned = planned;
             obj.trail = trail;
             obj.burns = burns;
-            this.dynamic.add(planned, trail, burns);
+            obj.dvGroup = dvGroup;
+            this.dynamic.add(planned, trail, burns, dvGroup);
         }
+    }
+
+    // Vetor de tela a partir das componentes tangencial (prógrado +) e radial (para fora +)
+    // no ponto de ângulo a. Usa os ângulos reais, sem o exagero da altitude.
+    direcaoLocal(a, tan, rad) {
+        const radial = new THREE.Vector3(Math.cos(a), Math.sin(a), 0);
+        const tangente = new THREE.Vector3(-Math.sin(a), Math.cos(a), 0);
+        const v = tangente.clone().multiplyScalar(tan).addScaledVector(radial, rad);
+        return v.lengthSq() > 0 ? v.normalize() : tangente;
+    }
+
+    descreveImpulso(imp) {
+        const tan = imp.dvTan ?? imp.dv;
+        const rad = imp.dvRad ?? 0;
+        const partes = [];
+        if (Math.abs(tan) >= 0.05) partes.push(`${tan > 0 ? 'prógrado' : 'retrógrado'} ${Math.abs(tan).toFixed(1)}`);
+        if (Math.abs(rad) >= 0.05) partes.push(`radial ${rad > 0 ? 'p/ fora' : 'p/ dentro'} ${Math.abs(rad).toFixed(1)}`);
+        return partes.join(' + ') || 'ajuste';
+    }
+
+    // Esconde/mostra satélites (cena, rótulos, lista e gráficos) e os vetores.
+    applyVisibility() {
+        this.legend?.querySelectorAll('.sim-legend-vec').forEach((el) => {
+            el.style.display = this.showVectors ? '' : 'none';
+        });
+        const pauseWrap = this.options?.querySelector('[data-role="pause-wrap"]');
+        if (pauseWrap) pauseWrap.style.display = this.showVectors ? '' : 'none';
+
+        for (const [nome, obj] of Object.entries(this.objects)) {
+            const vis = this.visible[nome] !== false;
+            obj.hidden = !vis;
+            obj.mesh.visible = vis;
+            obj.velArrow.visible = vis && this.showVectors;
+            for (const key of ['slot', 'planned', 'trail', 'burns']) {
+                if (obj[key]) obj[key].visible = vis;
+            }
+            if (obj.dvGroup) obj.dvGroup.visible = vis && this.showVectors;
+        }
+        for (const chart of Object.values(this.charts || {})) {
+            for (const ds of chart.data.datasets) {
+                if (ds.satKey) ds.hidden = this.visible[ds.satKey] === false;
+            }
+            chart.update('none');
+        }
+        this.renderFrame();
+        if (this.sim) this.updateLabels();
+    }
+
+    // Primeiro impulso de satélite visível com prev < tH <= ate (ou null).
+    burnAt(prev, ate) {
+        let achado = null;
+        for (const [nome, obj] of Object.entries(this.objects)) {
+            if (!obj.data?.manobra || obj.hidden) continue;
+            obj.data.impulsos.forEach((imp, k) => {
+                if (imp.tH > prev && imp.tH <= ate && (!achado || imp.tH < achado.imp.tH)) {
+                    achado = { nome, imp, k };
+                }
+            });
+        }
+        return achado;
     }
 
     placeCamera() {
@@ -521,7 +664,15 @@ class SimulationWidget extends BaseWidget {
         const dtReal = this.lastTs == null ? 0 : Math.min((ts - this.lastTs) / 1000, 0.1);
         this.lastTs = ts;
         if (this.sim && this.playing) {
+            const anterior = this.simH;
             this.simH += dtReal / this.segundosPorHora;
+            const impulso = this.showVectors && this.pauseOnBurns ? this.burnAt(anterior, this.simH) : null;
+            if (impulso) {
+                this.simH = impulso.imp.tH;
+                this.playing = false;
+                this.setStatus(`⏸ Impulso ${impulso.k + 1} da ${impulso.nome}: ΔV ${impulso.imp.dv.toFixed(1)} m/s · `
+                    + `${this.descreveImpulso(impulso.imp)}. Clique em ▶ para continuar.`, 'info');
+            }
             if (this.simH >= this.sim.duracaoH) {
                 this.simH = this.sim.duracaoH;
                 this.playing = false;
@@ -544,7 +695,12 @@ class SimulationWidget extends BaseWidget {
         const i1 = Math.min(i0 + 1, n - 1);
         const f = idxF - i0;
 
-        this.objects.Gabriella.mesh.position.copy(this.polar(c.rRef, c.nRef * tSeg, tSeg));
+        const gab = this.objects.Gabriella;
+        gab.mesh.position.copy(this.polar(c.rRef, c.nRef * tSeg, tSeg));
+        gab.speed = c.vRef ?? null;
+        if (this.showVectors) {
+            apontaSeta(gab.velArrow, gab.mesh.position, this.direcaoLocal(c.nRef * tSeg + this.offsetFrame(tSeg), 1, 0));
+        }
 
         const linhas = [];
         for (const [nome, obj] of Object.entries(this.objects)) {
@@ -556,10 +712,26 @@ class SimulationWidget extends BaseWidget {
             obj.slot.position.copy(this.polar(c.rRef, c.nRef * tSeg + obj.data.phiAlvo, tSeg));
             if (obj.trail) obj.trail.geometry.setDrawRange(0, i0 + 1);
 
+            // velocidade: módulo e componente radial vêm do backend [km/s]
+            const v = obj.data.v ? obj.data.v[i0] + f * (obj.data.v[i1] - obj.data.v[i0]) : null;
+            const vr = obj.data.vr ? obj.data.vr[i0] + f * (obj.data.vr[i1] - obj.data.vr[i0]) : 0;
+            obj.speed = v;
+            if (this.showVectors && v) {
+                apontaSeta(obj.velArrow, obj.mesh.position, this.direcaoLocal(th + this.offsetFrame(tSeg),
+                    Math.sqrt(Math.max(v * v - vr * vr, 0)), vr));
+            }
+            for (const item of obj.dvArrows || []) {
+                item.ativo = Math.abs(this.simH - item.imp.tH) <= JANELA_IMPULSO_H;
+                item.arrow.userData.material.opacity = item.ativo ? 1 : 0.25;
+                item.arrow.scale.setScalar(item.ativo ? 1.25 : 1);
+            }
+            if (obj.hidden) continue;
+
             if (obj.data.manobra) {
                 const itens = obj.data.impulsos.map((imp, k) => {
                     const feito = this.simH >= imp.tH;
-                    return `<li class="${feito ? 'done' : ''}">${feito ? '✓' : '·'} ${k + 1}: T+ ${imp.tH.toFixed(2)} h · ΔV ${imp.dv.toFixed(1)} m/s</li>`;
+                    const direcao = this.showVectors ? ` · ${this.descreveImpulso(imp)}` : '';
+                    return `<li class="${feito ? 'done' : ''}">${feito ? '✓' : '·'} ${k + 1}: T+ ${imp.tH.toFixed(2)} h · ΔV ${imp.dv.toFixed(1)} m/s${direcao}</li>`;
                 }).join('');
                 linhas.push(`<div><b style="color:${CSS(CORES[nome])}">${esc(nome)}</b> · ${esc(obj.data.estrategia.nome)}
                     · ${obj.data.dist[i0].toFixed(0)} km · ${obj.data.alt[i0].toFixed(1)} km alt<ul>${itens}</ul></div>`);
@@ -576,11 +748,19 @@ class SimulationWidget extends BaseWidget {
     updateLabels() {
         const w = this.view.clientWidth;
         const h = this.view.clientHeight;
-        for (const obj of Object.values(this.objects)) {
-            const v = obj.mesh.position.clone().project(this.camera);
-            const visible = v.z < 1 && Math.abs(v.x) <= 1.1 && Math.abs(v.y) <= 1.1;
-            obj.label.style.display = visible ? 'block' : 'none';
-            obj.label.style.transform = `translate(${((v.x + 1) / 2) * w + 8}px, ${((1 - v.y) / 2) * h - 8}px)`;
+        const place = (el, pos, show) => {
+            const v = pos.clone().project(this.camera);
+            const visible = show && v.z < 1 && Math.abs(v.x) <= 1.1 && Math.abs(v.y) <= 1.1;
+            el.style.display = visible ? 'block' : 'none';
+            if (visible) el.style.transform = `translate(${((v.x + 1) / 2) * w + 8}px, ${((1 - v.y) / 2) * h - 8}px)`;
+        };
+        for (const [nome, obj] of Object.entries(this.objects)) {
+            const texto = this.showVectors && obj.speed ? `${nome} · v ${obj.speed.toFixed(4)} km/s` : nome;
+            if (obj.label.textContent !== texto) obj.label.textContent = texto;
+            place(obj.label, obj.mesh.position, !obj.hidden);
+            (obj.dvArrows || []).forEach((item, k) => {
+                place(obj.dvLabels[k], item.tip, this.showVectors && !obj.hidden && item.ativo);
+            });
         }
     }
 

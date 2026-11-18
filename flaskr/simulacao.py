@@ -56,7 +56,7 @@ def propagar(phi0, h, eventos, t_fim):
     k = 0
     t = 0.0
     impulsos = []
-    amostras = {"x": [], "y": [], "alt": [], "dist": []}
+    amostras = {"x": [], "y": [], "alt": [], "dist": [], "v": [], "vr": []}
 
     def aplica_eventos():
         nonlocal k, vx, vy
@@ -66,16 +66,22 @@ def propagar(phi0, h, eventos, t_fim):
             vel = math.hypot(vx, vy)
             if e["tipo"] == "tang":
                 fator = e["v_alvo"] / vel
-                dv = abs(e["v_alvo"] - vel)
-                vx, vy = vx * fator, vy * fator
+                nvx, nvy = vx * fator, vy * fator
             else:
                 r = math.hypot(x, y)
                 vc = math.sqrt(am.GM / r)
                 nvx, nvy = -vc * y / r, vc * x / r
-                dv = math.hypot(nvx - vx, nvy - vy)
-                vx, vy = nvx, nvy
+            dvx, dvy = nvx - vx, nvy - vy
+            vx, vy = nvx, nvy
+            # componentes do ΔV no referencial local: radial (para fora da Terra) e
+            # tangencial (positivo = prógrado, no sentido do movimento)
+            r = math.hypot(x, y)
+            dv_rad = (dvx * x + dvy * y) / r
+            dv_tan = (-dvx * y + dvy * x) / r
             impulsos.append({"tH": round(t / 3600, 4), "x": round(x, 1), "y": round(y, 1),
-                             "dv": round(dv * 1000, 2), "desc": e["desc"]})
+                             "dv": round(math.hypot(dvx, dvy) * 1000, 2),
+                             "dvRad": round(dv_rad * 1000, 2), "dvTan": round(dv_tan * 1000, 2),
+                             "desc": e["desc"]})
 
     n_amostras = int(math.ceil(t_fim / DT_AMOSTRA_S))
     for i in range(n_amostras + 1):
@@ -96,6 +102,8 @@ def propagar(phi0, h, eventos, t_fim):
         amostras["y"].append(round(y, 1))
         amostras["alt"].append(round(r - am.R_TERRA, 2))
         amostras["dist"].append(round(math.hypot(x - gx, y - gy), 1))
+        amostras["v"].append(round(math.hypot(vx, vy), 5))           # velocidade [km/s]
+        amostras["vr"].append(round((vx * x + vy * y) / r, 5))       # componente radial [km/s]
     return amostras, impulsos
 
 
@@ -168,6 +176,6 @@ def simular(pedido):
         "constantes": {
             "rTerra": am.R_TERRA, "hRef": am.H_REF, "rRef": am.R_REF, "nRef": am.N_REF,
             "dAlvo": am.D_ALVO, "alpha": am.ALPHA, "periodoH": am.T_REF / 3600,
-            "altMax": am.ALT_MAX,
+            "altMax": am.ALT_MAX, "vRef": math.sqrt(am.GM / am.R_REF),
         },
     }
