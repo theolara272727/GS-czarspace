@@ -6,6 +6,7 @@ import chartWidget from './widgets/ChartWidget.js';
 import MapWidget from './widgets/MapWidget.js';
 import ConstellationWidget from './widgets/ConstellationWidget.js';
 import ManeuverWidget from './widgets/ManeuverWidget.js';
+import SimulationWidget from './widgets/SimulationWidget.js';
 import { createWidgetFromSpec as restoreWidgetFromSpec } from './widgets/WidgetRegistry.js';
 
 const socket = io();
@@ -23,6 +24,13 @@ const receivedPacketTimes = [];
 let dataRateStartedAt = Date.now();
 let latestManeuver = null;
 let latestUwbStatus = null;
+let simulationWidget = null;   // != null enquanto a simulação de manobra está aberta
+
+// Durante a simulação, os painéis marcados com freezesOnSimulation (Manobras e
+// Constelação 3D) ficam travados no estado do momento do clique em SIMULAR.
+function isFrozen(widget) {
+    return simulationWidget !== null && widget.constructor?.freezesOnSimulation === true;
+}
 
 function setLinkStatus(connected) {
     const status = document.getElementById('link-status');
@@ -110,6 +118,7 @@ socket.on('serial_received', (data) => {
 socket.on('manobra', (payload) => {
     latestManeuver = payload;
     for (const widget of widget_list) {
+        if (isFrozen(widget)) continue;
         if (typeof widget.updateManeuver === 'function') widget.updateManeuver(payload);
     }
 });
@@ -128,6 +137,44 @@ socket.on('serial_line', (payload) => {
         if (typeof widget.appendSerialLine === 'function') widget.appendSerialLine(payload.line);
     }
 });
+
+function requestSimulation(pedido, callback) {
+    socket.timeout(30000).emit('simular_manobra', pedido, (error, response) => {
+        callback(error ? { ok: false, message: 'O backend não respondeu a tempo.' } : response);
+    });
+}
+
+function setSimulationState(active) {
+    for (const widget of widget_list) {
+        if (widget.constructor?.freezesOnSimulation !== true) continue;
+        widget.element.classList.toggle('widget-frozen', active);
+        if (typeof widget.setSimulationState === 'function') widget.setSimulationState(active);
+    }
+}
+
+function startSimulation(frozenPayload) {
+    if (simulationWidget) simulationWidget.closeWidget.click();
+    const widget = new SimulationWidget('Simulação de manobra', 'workspace', frozenPayload, {
+        requestSimulation,
+        onClose: endSimulation
+    });
+    simulationWidget = widget;
+    registerWidget(widget);
+    widget.render();
+    setSimulationState(true);
+}
+
+function endSimulation(widget) {
+    if (widget && widget !== simulationWidget) return;
+    simulationWidget = null;
+    setSimulationState(false);
+    // devolve aos painéis destravados o que chegou enquanto estavam travados
+    for (const w of widget_list) {
+        if (w.constructor?.freezesOnSimulation !== true) continue;
+        if (latestManeuver && typeof w.updateManeuver === 'function') w.updateManeuver(latestManeuver);
+        if (viewMode === 'live') w.update(current_data);
+    }
+}
 
 function requestManeuver(forcar, callback) {
     socket.timeout(20000).emit('manobra_solicitar', { forcar }, (error, response) => {
@@ -163,6 +210,7 @@ socket.on('historical_error', (error) => {
 
 function updateWidgets(data_source) {
     for (let widget of widget_list) {
+        if (isFrozen(widget)) continue;
         widget.update(data_source);
     }
 }
@@ -328,6 +376,13 @@ function registerWidget(widget) {
     widget_list.push(widget);
 
     if (typeof widget.setManeuverRequester === 'function') widget.setManeuverRequester(requestManeuver);
+    if (typeof widget.setSimulationHandlers === 'function') {
+        widget.setSimulationHandlers(startSimulation, () => simulationWidget?.closeWidget.click());
+    }
+    if (simulationWidget && widget.constructor?.freezesOnSimulation === true) {
+        widget.element.classList.add('widget-frozen');
+        widget.setSimulationState?.(true);
+    }
     if (latestUwbStatus && typeof widget.updateUwbStatus === 'function') widget.updateUwbStatus(latestUwbStatus);
     if (latestManeuver && typeof widget.updateManeuver === 'function') widget.updateManeuver(latestManeuver);
 
@@ -449,7 +504,7 @@ function getCurrentModeSpec(name) {
         name,
         code: existingMode?.code || '',
         dataTypes: existingMode && existingMode.dataTypes ? existingMode.dataTypes : [],
-        widgets: widget_list.filter((widget) => widget.element?.isConnected).map((widget) => {
+        widgets: widget_list.filter((widget) => widget.element?.isConnected && !widget.ephemeral).map((widget) => {
             if (typeof widget.serialize === 'function') {
                 return widget.serialize();
             }
