@@ -516,8 +516,31 @@ body {
     background: var(--amber);
     box-shadow: 0 0 7px currentColor;
 }
-#link-status.connected { color: var(--signal); }
-#link-status.connected .status-dot { background: var(--signal); }
+.serial-status { color: var(--amber); }
+.serial-status .status-dot { background: currentColor; }
+.serial-status.connected { color: var(--signal); }
+.serial-status.offline { color: #e66b6b; }
+
+.relay-widget .widget-content { overflow: auto; padding: 12px; box-sizing: border-box; }
+.relay-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--muted); font-size: 10px; }
+.relay-toolbar select { flex: 1; min-width: 160px; max-width: 100%; padding: 7px; color: var(--text); background: #0e171d; border: 1px solid var(--line); }
+.relay-summary { color: var(--text); font-size: 12px; line-height: 1.6; }
+.relay-network { border: 1px solid var(--line); background: #080e13; }
+.relay-network:empty { display: none; }
+.relay-network svg { display: block; width: 100%; max-height: 300px; }
+.relay-edge { fill: var(--muted); stroke: var(--muted); }
+.relay-edge path { fill: none; stroke-width: 2; }
+.relay-edge-active { fill: var(--signal); stroke: var(--signal); }
+.relay-edge-active path { stroke-width: 3; stroke-dasharray: 8 5; animation: relay-flow 1s linear infinite; }
+.relay-node circle { fill: #14212b; stroke: var(--line-bright); stroke-width: 2; }
+.relay-node text { fill: var(--text); text-anchor: middle; font: 12px monospace; }
+.relay-node .relay-node-label { fill: var(--muted); font-size: 11px; }
+.relay-node-active circle { stroke: var(--signal); }
+.relay-timeline { max-height: 180px; overflow-y: auto; padding-left: 24px; color: var(--text); font-size: 11px; line-height: 1.8; }
+.relay-timeline li { padding: 4px; border-bottom: 1px solid var(--line); }
+.relay-note { color: var(--muted); font-size: 10px; line-height: 1.6; }
+@keyframes relay-flow { to { stroke-dashoffset: -26; } }
+@media (prefers-reduced-motion: reduce) { .relay-edge-active path { animation: none; } }
 
 .header-actions { height: 100%; gap: 5px; margin-left: 12px; }
 .action-btn {

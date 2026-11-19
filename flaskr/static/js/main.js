@@ -6,6 +6,7 @@ import chartWidget from './widgets/ChartWidget.js';
 import MapWidget from './widgets/MapWidget.js';
 import ConstellationWidget from './widgets/ConstellationWidget.js';
 import ManeuverWidget from './widgets/ManeuverWidget.js';
+import RelayWidget from './widgets/RelayWidget.js';
 import { createWidgetFromSpec as restoreWidgetFromSpec } from './widgets/WidgetRegistry.js';
 
 const socket = io();
@@ -25,11 +26,15 @@ let latestManeuver = null;
 let latestUwbStatus = null;
 let latestUwbTelemetry = null;
 
-function setLinkStatus(connected) {
-    const status = document.getElementById('link-status');
+function setSerialStatus(target, connected, description = '') {
+    if (!['main', 'uwb'].includes(target)) return;
+    const status = document.getElementById(`serial-${target}-status`);
     if (!status) return;
-    status.classList.toggle('connected', connected);
-    status.innerHTML = `<i class="status-dot"></i> ${connected ? 'NOMINAL' : 'OFFLINE'}`;
+    status.classList.toggle('connected', connected === true);
+    status.classList.toggle('offline', connected === false);
+    const label = connected === null ? 'STANDBY' : connected ? 'NOMINAL' : 'OFFLINE';
+    status.innerHTML = `<i class="status-dot" aria-hidden="true"></i> ${label}`;
+    status.title = description;
 }
 
 function formatLocalTime(date) {
@@ -60,16 +65,21 @@ function updateDataRate() {
     if (rate) rate.textContent = `${packetsPerSecond.toFixed(1)} pkt/s`;
 }
 
-socket.on('connection_status', (data) => setLinkStatus(data?.connected === true));
+socket.on('serial_status', (data) => {
+    if (!data) return;
+    const details = [data.port, data.baud ? `${data.baud} baud` : '', data.message].filter(Boolean);
+    setSerialStatus(data.target, data.connected === true, details.join(' · '));
+});
 socket.on('connect', () => {
     dataRateStartedAt = Date.now();
     receivedPacketTimes.length = 0;
-    setLinkStatus(true);
     updateDataRate();
 });
 socket.on('disconnect', () => {
     receivedPacketTimes.length = 0;
-    setLinkStatus(false);
+    for (const target of ['main', 'uwb']) {
+        setSerialStatus(target, null, 'Sem contato com o servidor; estado serial desconhecido.');
+    }
     updateDataRate();
 });
 
@@ -768,6 +778,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    const createRelayBtn = document.getElementById('relayButton');
+    if (createRelayBtn) {
+        createRelayBtn.addEventListener('click', () => {
+            const widget = registerWidget(new RelayWidget('Repasse M3', 'workspace', current_data));
+            widget.render();
+        });
+    }
+
     if (saveModeButton) {
         saveModeButton.addEventListener('click', async () => {
             if (!currentMode) {
@@ -842,6 +860,7 @@ const historyControls = document.getElementById('history-controls');
     const stopHistoryBtn = document.getElementById('stop-history-btn');
 
     document.getElementById('btn-live').addEventListener('click', () => {
+        if (viewMode === 'historical') clearWidgetData();
         viewMode = 'live';
         historicalRequestId += 1;
         stopHistoricalPlayback();

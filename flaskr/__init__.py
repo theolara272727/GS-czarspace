@@ -221,7 +221,9 @@ def create_app(test_config=None):
     if (app.config['UWB_SOURCE'] == 'serial' and not app.config['UWB_SERIAL_PORT']
             and app.config.get('UWB_SERIAL_CONNECTION') is None):
         raise ValueError('Configure UWB_SERIAL_PORT para usar a segunda porta serial.')
-    app.extensions['serial_ports'] = SerialPorts(app.config)
+    app.extensions['serial_ports'] = SerialPorts(
+        app.config, on_status_change=lambda status: socketio.emit('serial_status', status),
+    )
     socketio.init_app(app)
     os.makedirs(app.instance_path, exist_ok=True)
 
@@ -629,6 +631,8 @@ def handle_maneuver_request(payload):
 @socketio.on('connect')
 def init_connection():
     emit('connection_status', {'connected': True})
+    for target in ('main', 'uwb'):
+        emit('serial_status', current_app.extensions['serial_ports'].status(target))
     emit('uwb_status', dict(uwb_status))
     if uwb_processor.ultimo_resultado is not None:
         emit('manobra', uwb_processor.ultimo_resultado)
@@ -752,6 +756,19 @@ def _parse_iso_datetime(value, field_name):
     return parsed.astimezone(timezone.utc)
 
 
+def _historical_rows():
+    for target, config_key in (('main', 'TELEMETRY_CSV'), ('uwb', 'UWB_TELEMETRY_CSV')):
+        try:
+            csv_file = open(current_app.config[config_key], 'r', encoding='utf-8', newline='')
+        except FileNotFoundError:
+            if target == 'uwb':
+                continue
+            raise
+        with csv_file:
+            for row in csv.DictReader(csv_file):
+                yield target, row
+
+
 def query_timeframe(start_utc, end_utc, mode_code=None):
     start = _parse_iso_datetime(start_utc, 'start')
     end = _parse_iso_datetime(end_utc, 'end')
@@ -764,36 +781,37 @@ def query_timeframe(start_utc, end_utc, mode_code=None):
     mode_code = _normalize_mode_code(mode_code) if mode_code else None
     rows = []
     with telemetry_lock:
-        with open(CSV_PATH, 'r', encoding='utf-8', newline='') as csv_file:
-            for row_number, row in enumerate(csv.DictReader(csv_file)):
-                collection_timestamp = row.get('collection_timestamp') or row.get('timestamp')
-                try:
-                    collected_at = _parse_iso_datetime(collection_timestamp, 'timestamp')
-                    value = float(row['valor'])
-                except (KeyError, TypeError, ValueError):
-                    continue
-                row_mode_code = row.get('mode_code') or None
-                if start <= collected_at <= end and (not mode_code or row_mode_code == mode_code):
-                    rows.append((
-                        collected_at,
-                        row_number,
-                        collection_timestamp,
-                        row.get('received_timestamp') or collection_timestamp,
-                        row_mode_code,
-                        row.get('tipo_dado'),
-                        value,
-                    ))
+        for row_number, (target, row) in enumerate(_historical_rows()):
+            collection_timestamp = row.get('collection_timestamp') or row.get('timestamp')
+            try:
+                collected_at = _parse_iso_datetime(collection_timestamp, 'timestamp')
+                value = float(row['valor'])
+            except (KeyError, TypeError, ValueError):
+                continue
+            row_mode_code = row.get('mode_code') or None
+            if start <= collected_at <= end and (not mode_code or row_mode_code == mode_code):
+                rows.append((
+                    collected_at,
+                    row_number,
+                    collection_timestamp,
+                    row.get('received_timestamp') or collection_timestamp,
+                    row_mode_code,
+                    row.get('tipo_dado'),
+                    value,
+                    target,
+                ))
 
     rows.sort(key=lambda row: (row[0], row[1]))
 
     samples_by_timestamp = {}
-    for _, _, timestamp, received_timestamp, mode_code, data_type, value in rows:
-        sample_key = (timestamp, received_timestamp, mode_code)
+    for _, _, timestamp, received_timestamp, mode_code, data_type, value, target in rows:
+        sample_key = (timestamp, received_timestamp, mode_code, target)
         sample = samples_by_timestamp.setdefault(sample_key, {
             'timestamp': timestamp,
             'collectionTimestamp': timestamp,
             'receivedTimestamp': received_timestamp,
             'modeCode': mode_code,
+            'serialSource': {'target': target},
         })
         sample[str(data_type)] = value
 
@@ -810,15 +828,14 @@ def query_telemetry_availability(mode_code=None):
     mode_code = _normalize_mode_code(mode_code) if mode_code else None
     timestamps = set()
     with telemetry_lock:
-        with open(CSV_PATH, 'r', encoding='utf-8', newline='') as csv_file:
-            for row in csv.DictReader(csv_file):
-                timestamp = row.get('collection_timestamp') or row.get('timestamp')
-                if timestamp and (not mode_code or row.get('mode_code') == mode_code):
-                    try:
-                        _parse_iso_datetime(timestamp, 'timestamp')
-                    except (TypeError, ValueError):
-                        continue
-                    timestamps.add(timestamp)
+        for _, row in _historical_rows():
+            timestamp = row.get('collection_timestamp') or row.get('timestamp')
+            if timestamp and (not mode_code or row.get('mode_code') == mode_code):
+                try:
+                    _parse_iso_datetime(timestamp, 'timestamp')
+                except (TypeError, ValueError):
+                    continue
+                timestamps.add(timestamp)
 
     ordered_timestamps = sorted(timestamps, key=lambda value: _parse_iso_datetime(value, 'timestamp'))
     samples_by_day = {}

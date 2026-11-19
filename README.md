@@ -131,11 +131,32 @@ manobras são reavaliadas; o botão FORÇAR calcula as 3 estratégias mesmo se n
 Escala, altitude, janela da média móvel etc. ficam no topo de `flaskr/uwb.py`.
 
 Arquivos gerados em `instance/`:
-- `historico_voo.csv`: telemetria da porta principal, usada pelo REPLAY existente.
+- `historico_voo.csv`: telemetria da porta principal.
 - `historico_uwb.csv`: arquivo separado com distâncias médias (`dA1..d23` em m,
   `dBG_km`, `dGC_km`); não é misturado ao histórico principal.
 - `uwb_bruto.csv`: linhas `D,a,b,dist,rx,t` recebidas (só no modo serial).
 - `manobras.jsonl`: cada manobra nova calculada.
+
+O REPLAY consulta `historico_voo.csv` e `historico_uwb.csv`, filtrando pelo código
+do modo e ordenando as amostras por horário. A origem de cada amostra é preservada,
+sem juntar medidas de canais diferentes. O histórico UWB continua disponível com
+a recepção desligada; antes da primeira gravação, a ausência desse CSV é normal.
+Para o modo `0x31`, são reproduzidas as distâncias médias já armazenadas, inclusive
+no painel Constelação 3D, não os pacotes brutos nem o log de decisões de manobra.
+
+### Repasse da missão 3
+
+O painel **Repasse M3**, disponível em ADD PANEL, recebe os avisos `0x32` com
+`De`, `Para`, `Visitados`, `ICAO` e `Sequencia`. Mostra uma rede 2D com setas
+direcionais, destaca o último salto e lista os avisos da mensagem selecionada.
+O seletor acompanha a última mensagem ou fixa uma combinação ICAO/sequência.
+O painel mantém até 200 avisos e pode reproduzir as amostras do REPLAY; ao iniciar
+outra reprodução ou retornar ao LIVE, o estado anterior é limpo.
+
+Os nós são identificados pelos IDs recebidos. `Visitados` é mostrado como valor
+bruto, sem assumir uma codificação de máscara. A correlação ICAO/sequência não
+garante unicidade entre sessões. As setas representam avisos de repasse, não
+confirmações de entrega; eventos `0xF4` não são usados nesta primeira versão.
 
 Testes sem hardware:
 

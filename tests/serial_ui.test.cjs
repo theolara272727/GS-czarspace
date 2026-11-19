@@ -23,7 +23,7 @@ class Element {
     }
     append(...items) { this.children.push(...items); }
     appendChild(item) { this.append(item); }
-    replaceChildren() { this.children = []; }
+    replaceChildren() { this.children = []; this.innerHTML = ''; }
     addEventListener(event, callback) { this.listeners[event] = callback; }
     setAttribute(name, value) { this.attributes[name] = value; }
     focus() {}
@@ -159,22 +159,46 @@ function testStreamRouting() {
             callback(null, { ok: true });
         } })
     });
-    const mainUpdates = [], uwbUpdates = [], terminalTelemetry = [];
+    const mainUpdates = [], uwbUpdates = [], historicalUwbUpdates = [], terminalTelemetry = [];
     context.mainWidget = {
         update: data => mainUpdates.push(data),
         receiveSerialTelemetry: data => terminalTelemetry.push(data)
     };
     context.uwbWidget = {
-        update: () => { throw new Error('Principal overwrote constellation'); },
+        update: data => historicalUwbUpdates.push(data),
         updateUwbTelemetry: data => uwbUpdates.push(data)
     };
     load(context, 'flaskr/static/js/main.js');
     vm.runInContext("widget_list.push(mainWidget, uwbWidget); currentMode = {code: '0x10'};", context);
+    const mainStatus = context.document.getElementById('serial-main-status');
+    const uwbStatus = context.document.getElementById('serial-uwb-status');
+    handlers.connect();
+    assert.equal(mainStatus.classList.contains('connected'), false);
+    assert.equal(uwbStatus.classList.contains('connected'), false);
+    handlers.serial_status({ target: 'main', connected: true, port: 'COM14', baud: 115200 });
+    assert(mainStatus.innerHTML.includes('NOMINAL'));
+    assert(mainStatus.classList.contains('connected'));
+    assert(mainStatus.title.includes('COM14'));
+    assert.equal(uwbStatus.classList.contains('connected'), false);
+    handlers.serial_status({ target: 'uwb', connected: false, message: 'Porta ocupada' });
+    assert(uwbStatus.innerHTML.includes('OFFLINE'));
+    assert(uwbStatus.classList.contains('offline'));
+    assert.equal(uwbStatus.title, 'Porta ocupada');
+    handlers.serial_status({ target: 'uwb', connected: true, port: 'COM15' });
+    assert(uwbStatus.classList.contains('connected'));
+    assert.equal(uwbStatus.classList.contains('offline'), false);
+    handlers.disconnect();
+    for (const status of [mainStatus, uwbStatus]) {
+        assert(status.innerHTML.includes('STANDBY'));
+        assert.equal(status.classList.contains('connected'), false);
+        assert.equal(status.classList.contains('offline'), false);
+    }
     handlers.new_data({ modeCode: '0x10', values: { V_bateria: 8.7 }, serialSource: { target: 'main', port: 'COM14' } });
     handlers.uwb_data({ modeCode: '0x10', values: { dA1: 3.5 }, serialSource: { target: 'uwb', port: 'COM15' } });
     assert.equal(mainUpdates.length, 1);
     assert.equal(uwbUpdates.length, 1);
     assert.equal(mainUpdates[0].V_bateria, 8.7);
+    assert.equal(historicalUwbUpdates.length, 0);
     assert.equal(uwbUpdates[0].values.dA1, 3.5);
     vm.runInContext("currentMode = {code: '0x1'};", context);
     handlers.uwb_data({ values: { dA1: 4 } });
@@ -184,6 +208,13 @@ function testStreamRouting() {
     vm.runInContext("viewMode = 'historical';", context);
     handlers.uwb_data({ values: { dA1: 5 } });
     assert.equal(uwbUpdates.length, 2);
+    context.playHistoricalSamples([{
+        timestamp: '2026-11-18T12:00:01Z', modeCode: '0x31',
+        serialSource: { target: 'uwb' }, dA1: 3, d12: 2
+    }], 1);
+    assert.equal(historicalUwbUpdates.length, 1);
+    assert.equal(historicalUwbUpdates[0].dA1, 3);
+    assert.equal(historicalUwbUpdates[0].serialSource.target, 'uwb');
     context.sendSerialCommand('P', () => {}, 'uwb');
     assert.equal(sent[0].payload.target, 'uwb');
     assert.equal(sent[0].event, 'serial_command');
@@ -212,6 +243,12 @@ function testConstellationAcceptsUwbPacket() {
     assert.equal(initial[1][1], 0);
     widget.updateUwbTelemetry({ values: { dA1: 3, dA2: 5, dA3: 5, d12: 3, d13: 2, d23: 3 } });
     assert.notDeepEqual(widget.sats[2].userData.targetPosition.coordinates, initial[2]);
+    widget.update({
+        timestamp: '2026-11-18T12:00:01Z', modeCode: '0x31',
+        serialSource: { target: 'uwb' }, dA1: 6, dA2: 5, dA3: 5, d12: 3, d13: 2, d23: 3
+    });
+    assert.equal(widget.data.dA1, 6);
+    assert(widget.hud.innerHTML.includes('6.000 m'));
 }
 
 function testPanelFeedbackGoesToTerminal() {
@@ -302,6 +339,83 @@ function testTerminalReceiveFilter() {
     assert.equal(visible().length, 0);
 }
 
+function testRelayWidget() {
+    const context = makeContext();
+    for (const file of ['WidgetRegistry.js', 'BaseWidget.js', 'RelayWidget.js']) {
+        load(context, `flaskr/static/js/widgets/${file}`);
+    }
+    const widget = new context.RelayWidget('Repasse M3', 'workspace');
+    const packet = {
+        modeCode: '0x32', timestamp: '2026-11-19T12:00:00Z',
+        values: { De: 2, Para: 3, Visitados: 4, ICAO: 0xABC123, Sequencia: 42 }
+    };
+    assert.equal(widget.summary.textContent, '');
+    widget.update(packet);
+    assert(widget.summary.textContent.includes('ABC123'));
+    assert(widget.summary.textContent.includes('sequência 42'));
+    assert(widget.timeline.children[0].textContent.includes('Nó 2 → Nó 3'));
+    assert(widget.network.innerHTML.includes('<svg'));
+    widget.update(packet);
+    assert.equal(widget.timeline.children.length, 1);
+    widget.update({ ...packet, timestamp: '2026-11-19T12:00:01Z', values: {
+        ...packet.values, De: 3, Para: 1, Visitados: 12
+    } });
+    assert.equal(widget.timeline.children.length, 2);
+    assert(widget.network.innerHTML.includes('Nó 2 → Nó 3'));
+    assert(widget.network.innerHTML.includes('Nó 3 → Nó 1'));
+    assert(widget.summary.textContent.includes('Visitados: 12'));
+    widget.update({ ...packet, values: { ...packet.values, ICAO: 0xABC124 } });
+    assert.equal(widget.timeline.children.length, 1);
+    assert(widget.summary.textContent.includes('ABC124'));
+    widget.messageSelect.value = `${0xABC123}:42`;
+    widget.messageSelect.listeners.change();
+    assert.equal(widget.timeline.children.length, 2);
+    widget.update({ ...packet, modeCode: '0x31' });
+    widget.update({ ...packet, values: { ...packet.values, De: null } });
+    widget.update({ ...packet, values: { ...packet.values, Para: '<script>' } });
+    assert.equal(widget.timeline.children.length, 2);
+    const spec = widget.serialize();
+    assert.equal(spec.type, 'relay');
+    const restored = context.createWidgetFromSpec(spec, { containerId: 'workspace' });
+    assert(restored instanceof context.RelayWidget);
+    widget.clearData();
+    assert.equal(widget.summary.textContent, '');
+    assert.equal(widget.timeline.children.length, 0);
+    assert.equal(widget.network.innerHTML, '');
+    for (let sequence = 0; sequence < 205; sequence++) {
+        widget.update({ ...packet, values: { ...packet.values, Sequencia: sequence } });
+    }
+    assert.equal(widget.messageSelect.children.length, 201);
+    assert(!widget.messageSelect.children.some(option => option.value === `${0xABC123}:0`));
+}
+
+function testRelayLiveAndReplay() {
+    const context = makeContext();
+    const handlers = {};
+    context.io = () => ({ on: (event, callback) => { handlers[event] = callback; } });
+    for (const file of ['WidgetRegistry.js', 'BaseWidget.js', 'RelayWidget.js']) {
+        load(context, `flaskr/static/js/widgets/${file}`);
+    }
+    load(context, 'flaskr/static/js/main.js');
+    context.relay = new context.RelayWidget('Repasse M3', 'workspace');
+    vm.runInContext("widget_list.push(relay); currentMode = {code: '0x32'};", context);
+    handlers.new_data({ modeCode: '0x32', timestamp: '2026-11-19T12:00:00Z', values: {
+        De: 2, Para: 3, ICAO: 0xABC123, Sequencia: 42, Visitados: 4
+    } });
+    assert(context.relay.summary.textContent.includes('Nó 2 → Nó 3'));
+    vm.runInContext("viewMode = 'historical';", context);
+    context.playHistoricalSamples([{
+        modeCode: '0x32', timestamp: '2026-11-18T12:00:00Z',
+        De: 3, Para: 1, ICAO: 0xABC124, Sequencia: 8, Visitados: 12
+    }], 1);
+    assert.equal(context.relay.timeline.children.length, 1);
+    assert(context.relay.summary.textContent.includes('ABC124'));
+    handlers.new_data({ modeCode: '0x32', values: {
+        De: 0, Para: 2, ICAO: 0xABC125, Sequencia: 9
+    } });
+    assert(context.relay.summary.textContent.includes('ABC124'));
+}
+
 (async () => {
     testTerminal();
     await testCommandPanel();
@@ -309,7 +423,9 @@ function testTerminalReceiveFilter() {
     testConstellationAcceptsUwbPacket();
     testPanelFeedbackGoesToTerminal();
     testTerminalReceiveFilter();
-    console.log('OK: destinos no terminal/CMD, persistencia, timestamp e isolamento dos fluxos Principal/UWB.');
+    testRelayWidget();
+    testRelayLiveAndReplay();
+    console.log('OK: serial, isolamento Principal/UWB e Repasse M3 ao vivo/replay, seleção, limites e persistência.');
 })().catch(error => {
     console.error(error);
     process.exitCode = 1;

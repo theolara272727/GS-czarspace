@@ -33,8 +33,12 @@
 
         <div class="station-status" aria-label="Estado da estação">
             <div class="status-block">
-                <span class="status-label">LINK</span>
-                <span class="status-value" id="link-status"><i class="status-dot"></i> STANDBY</span>
+                <span class="status-label">SERIAL PRINCIPAL</span>
+                <span class="status-value serial-status" id="serial-main-status" role="status"><i class="status-dot" aria-hidden="true"></i> STANDBY</span>
+            </div>
+            <div class="status-block">
+                <span class="status-label">SERIAL DW1000</span>
+                <span class="status-value serial-status" id="serial-uwb-status" role="status"><i class="status-dot" aria-hidden="true"></i> STANDBY</span>
             </div>
             <div class="status-block">
                 <span class="status-label">LAST PACKET</span>
@@ -79,6 +83,7 @@
                     <div class="button" id="mapButton">Radar de Voo</div>
                     <div class="button" id="constellationButton">Constelação 3D</div>
                     <div class="button" id="maneuverButton">Manobras</div>
+                    <div class="button" id="relayButton">Repasse M3</div>
                 </div>
             </div>
             <button class="action-btn icon-action" id="saveModeButton" type="button" title="Atualizar modo atual" aria-label="Atualizar modo atual">

@@ -75,6 +75,55 @@ class SerialIntegrationTests(unittest.TestCase):
         with self.app.app_context():
             return flaskr.handle_serial_command(payload)
 
+    def test_serial_status_is_independent_and_sent_to_new_clients(self):
+        client = flaskr.socketio.test_client(self.app)
+        self.addCleanup(client.disconnect)
+        initial = [event['args'][0] for event in client.get_received()
+                   if event['name'] == 'serial_status']
+        self.assertEqual({s['target']: s['connected'] for s in initial}, {
+            'main': False, 'uwb': False,
+        })
+        ports = self.app.extensions['serial_ports']
+        ports.open('main')
+        ports.open('uwb')
+        opened = [event['args'][0] for event in client.get_received()
+                  if event['name'] == 'serial_status']
+        self.assertEqual({s['target']: s['connected'] for s in opened}, {
+            'main': True, 'uwb': True,
+        })
+        self.main.lines.append(serial.SerialException('cabo desconectado'))
+        with self.assertRaises(serial.SerialException):
+            ports.readline('main')
+        failed = [event['args'][0] for event in client.get_received()
+                  if event['name'] == 'serial_status']
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(failed[0]['target'], 'main')
+        self.assertFalse(failed[0]['connected'])
+        self.assertEqual(failed[0]['message'], 'cabo desconectado')
+        self.assertTrue(ports.status('uwb')['connected'])
+        newcomer = flaskr.socketio.test_client(self.app)
+        self.addCleanup(newcomer.disconnect)
+        snapshot = [event['args'][0] for event in newcomer.get_received()
+                    if event['name'] == 'serial_status']
+        self.assertEqual({s['target']: s['connected'] for s in snapshot}, {
+            'main': False, 'uwb': True,
+        })
+
+    def test_serial_status_recovers_after_open_failure_and_explicit_close(self):
+        self.app.config['SERIAL_CONNECTION'] = None
+        ports = self.app.extensions['serial_ports']
+        with patch('flaskr.serial_ports.serial.Serial', side_effect=serial.SerialException('ocupada')):
+            with self.assertRaises(serial.SerialException):
+                ports.open('main')
+        self.assertFalse(ports.status('main')['connected'])
+        self.assertEqual(ports.status('main')['message'], 'ocupada')
+        with patch('flaskr.serial_ports.serial.Serial', return_value=self.main):
+            ports.open('main')
+        self.assertTrue(ports.status('main')['connected'])
+        self.assertEqual(ports.status('main')['message'], '')
+        ports.close('main')
+        self.assertFalse(ports.status('main')['connected'])
+
     def test_readers_start_independently(self):
         for source in ('serial', 'simulado', 'off'):
             app = Flask('flaskr', instance_path=self.temporary.name)
@@ -183,7 +232,7 @@ class SerialIntegrationTests(unittest.TestCase):
         self.assertEqual(packet['values'], {'T': None, 'V': 8.7})
         self.assertEqual(packet['serialSource']['target'], 'main')
         json.dumps(packet, allow_nan=False)
-        emit.assert_not_called()
+        self.assertNotIn('serial_received', [call.args[0] for call in emit.call_args_list])
         self.assertEqual(self.uwb.writes, [])
 
     def test_nontelemetry_main_message_has_origin(self):
@@ -202,8 +251,9 @@ class SerialIntegrationTests(unittest.TestCase):
             self.assertEqual(flaskr._uwb_read_line(self.app, buffer), [])
             self.assertEqual(flaskr._uwb_read_line(self.app, buffer), ['D,0,1,3.5,-60,100'])
             self.assertEqual(flaskr._uwb_read_line(self.app, buffer), ['ACK'])
-        self.assertEqual(emit.call_count, 2)
-        telemetry, text = emit.call_args_list
+        packets = [call for call in emit.call_args_list if call.args[0] != 'serial_status']
+        self.assertEqual(len(packets), 2)
+        telemetry, text = packets
         self.assertEqual(telemetry.args[0], 'serial_telemetry')
         self.assertEqual(telemetry.args[1]['serialSource']['target'], 'uwb')
         self.assertEqual(telemetry.args[1]['serialSource']['port'], 'COM15')
@@ -217,7 +267,8 @@ class SerialIntegrationTests(unittest.TestCase):
         self.uwb.lines.append(b'784 0x31 0 nan nan nan 0.4172446\r\n')
         with patch.object(flaskr.socketio, 'emit') as emit:
             flaskr._uwb_read_line(self.app, bytearray())
-        emit.assert_called_once()
+        packets = [call for call in emit.call_args_list if call.args[0] != 'serial_status']
+        self.assertEqual(len(packets), 1)
         event, payload = emit.call_args.args
         self.assertEqual(event, 'serial_telemetry')
         self.assertEqual(payload['deviceTimestamp'], 784)
