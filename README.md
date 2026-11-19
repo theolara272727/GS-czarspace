@@ -86,7 +86,8 @@ IDs das placas: `0` = GS, `1` = Beatriz, `2` = Gabriella (referência), `3` = Ca
 | Simulação desativada (equivale a UWB desligada) | `$env:GS_UWB = 'simulado'` |
 
 Depois execute `py -m flask --app flaskr run`. Se `GS_UWB` não estiver definido,
-a fonte UWB serial é ativada usando `COM15` ou a porta definida em `UWB_SERIAL_PORT`.
+a constelação fica desligada; use `GS_UWB = 'serial'` para ativar a fonte UWB serial
+em `COM15` ou na porta definida em `UWB_SERIAL_PORT`.
 
 No modo `serial` a GS UWB usa seu próprio baud rate (`UWB_SERIAL_BAUD`, padrão
 115200). Ambas as portas usam o mesmo parser (`flaskr/telemetry.py`): o código

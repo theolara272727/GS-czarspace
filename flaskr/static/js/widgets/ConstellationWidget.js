@@ -5,6 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 class ConstellationWidget extends BaseWidget {
     static widgetType = 'constellation';
+    static freezesOnSimulation = true;
 
     constructor(title, idContainerDestino, initialData = {}) {
         super(title, idContainerDestino);

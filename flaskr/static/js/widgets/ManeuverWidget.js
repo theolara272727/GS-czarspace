@@ -29,6 +29,7 @@ function hora(iso) {
  */
 class ManeuverWidget extends BaseWidget {
     static widgetType = 'manobras';
+    static freezesOnSimulation = true;
 
     constructor(title, idContainerDestino) {
         super(title, idContainerDestino);
@@ -39,6 +40,9 @@ class ManeuverWidget extends BaseWidget {
         this.payload = null;
         this.status = null;
         this.requestManeuver = null;
+        this.startSimulation = null;
+        this.stopSimulation = null;
+        this.simulationActive = false;
         this.openDetails = new Set();
 
         this.toolbar = document.createElement('div');
@@ -49,6 +53,7 @@ class ManeuverWidget extends BaseWidget {
             <span class="mnv-spacer"></span>
             <button type="button" class="mnv-btn" data-action="recalc" title="Avalia agora com as medidas atuais">AVALIAR</button>
             <button type="button" class="mnv-btn mnv-btn-force" data-action="force" title="Calcula as 3 estratégias mesmo se estiver nominal">FORÇAR</button>
+            <button type="button" class="mnv-btn mnv-btn-sim" data-action="simulate" title="Trava os dados atuais e simula a manobra (20 min = 1 s)">SIMULAR</button>
         `;
         this.message = document.createElement('div');
         this.message.className = 'mnv-message';
@@ -62,7 +67,8 @@ class ManeuverWidget extends BaseWidget {
         this.toolbar.addEventListener('mousedown', (e) => e.stopPropagation());
         this.toolbar.addEventListener('click', (e) => {
             const action = e.target.closest('button')?.dataset.action;
-            if (action) this.request(action === 'force');
+            if (action === 'simulate') this.toggleSimulation();
+            else if (action) this.request(action === 'force');
         });
         // Guarda quais <details> estão abertos para não fechá-los a cada atualização.
         this.body.addEventListener('toggle', (e) => {
@@ -75,6 +81,38 @@ class ManeuverWidget extends BaseWidget {
 
     setManeuverRequester(fn) {
         this.requestManeuver = fn;
+    }
+
+    setSimulationHandlers(start, stop) {
+        this.startSimulation = start;
+        this.stopSimulation = stop;
+    }
+
+    toggleSimulation() {
+        if (this.simulationActive) {
+            this.stopSimulation?.();
+            return;
+        }
+        const temDados = this.payload && Object.values(this.payload.satelites || {})
+            .some((sat) => Number.isFinite(sat.dKm));
+        if (!temDados) {
+            this.setMessage('Ainda não há medidas de Beatriz/Carolina para simular.', 'error');
+            return;
+        }
+        this.startSimulation?.(structuredClone(this.payload));
+    }
+
+    // Chamado pelo main.js ao entrar/sair da simulação: trava o painel no estado atual.
+    setSimulationState(active) {
+        this.simulationActive = active;
+        const sim = this.toolbar.querySelector('[data-action="simulate"]');
+        sim.textContent = active ? 'AO VIVO' : 'SIMULAR';
+        sim.title = active ? 'Destrava os dados e volta ao tempo real' : 'Trava os dados atuais e simula a manobra (20 min = 1 s)';
+        this.toolbar.querySelectorAll('[data-action="recalc"], [data-action="force"]')
+            .forEach((b) => { b.disabled = active; });
+        this.setMessage(active
+            ? `Dados travados às ${hora(this.payload?.timestamp)} para a simulação.`
+            : 'Dados ao vivo.', active ? 'info' : 'ok');
     }
 
     request(forcar) {

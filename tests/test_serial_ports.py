@@ -148,7 +148,7 @@ class SerialIntegrationTests(unittest.TestCase):
         simulator.assert_not_called()
         emit.assert_not_called()
 
-    def test_default_is_not_simulation(self):
+    def test_default_uwb_source_is_off(self):
         app = Flask('flaskr', instance_path=self.temporary.name)
         with patch.dict('os.environ', {}, clear=True), \
                 patch.object(flaskr, 'Flask', return_value=app), \
@@ -156,7 +156,7 @@ class SerialIntegrationTests(unittest.TestCase):
             app = flaskr.create_app({'SERIAL_READER_ENABLED': False})
         self.assertEqual(app.config['SERIAL_PORT'], 'COM14')
         self.assertEqual(app.config['UWB_SERIAL_PORT'], 'COM15')
-        self.assertEqual(app.config['UWB_SOURCE'], 'serial')
+        self.assertEqual(app.config['UWB_SOURCE'], 'off')
 
     def test_commands_route_only_to_selected_port(self):
         self.assertTrue(self.send({'command': 'STATUS'})['ok'])

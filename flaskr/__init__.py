@@ -11,6 +11,7 @@ from contextlib import closing
 from flask_socketio import SocketIO, emit
 from datetime import datetime, timezone
 from . import uwb
+from . import simulacao
 from .serial_ports import SerialPorts, validate_target
 from .telemetry import _normalize_mode_code, _normalize_timestamp, parse_serial_message
 
@@ -191,7 +192,7 @@ def create_app(test_config=None):
     global CSV_PATH
     CSV_PATH = os.path.join(app.instance_path, 'historico_voo.csv')
     uwb_port = os.environ.get('UWB_SERIAL_PORT', 'COM15').strip()
-    uwb_source = os.environ.get('GS_UWB', 'serial' if uwb_port else 'off').strip().lower()
+    uwb_source = os.environ.get('GS_UWB', 'off').strip().lower()
     app.config.from_mapping(
         SECRET_KEY='dev',
         TELEMETRY_CSV=CSV_PATH,
@@ -615,6 +616,18 @@ def run_uwb_loop(app):
         if now >= next_evaluation:
             run_uwb_evaluation(app)
             next_evaluation = time.time() + uwb.PERIODO_S
+
+
+@socketio.on('simular_manobra')
+def handle_maneuver_simulation(payload):
+    """Botão SIMULAR: propaga as órbitas a partir do estado travado no navegador."""
+    try:
+        return {'ok': True, 'simulacao': simulacao.simular(payload)}
+    except ValueError as error:
+        return {'ok': False, 'message': str(error)}
+    except Exception:
+        current_app.logger.exception('Falha na simulação de manobra')
+        return {'ok': False, 'message': 'Falha ao simular (veja o terminal do Flask).'}
 
 
 @socketio.on('manobra_solicitar')
